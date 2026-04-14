@@ -111,6 +111,17 @@ function isNumericId(value) {
   return /^[0-9]+$/.test(String(value || ''))
 }
 
+function normalizePathname(pathname = '/') {
+  const raw = String(pathname || '/')
+  const parts = raw.split('/').filter(Boolean)
+
+  if (parts[0] && parts[0] !== 'api' && parts[1] === 'api') {
+    return '/' + parts.slice(1).join('/')
+  }
+
+  return raw || '/'
+}
+
 async function handleRest(req, res, url, parts) {
   const method = req.method || 'GET'
   const resource = parts[1]
@@ -562,9 +573,10 @@ const server = http.createServer(async (req, res) => {
   }
 
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
-  const parts = url.pathname.split('/').filter(Boolean)
+  const pathname = normalizePathname(url.pathname)
+  const parts = pathname.split('/').filter(Boolean)
 
-  if (req.method === 'GET' && url.pathname === '/') {
+  if (req.method === 'GET' && pathname === '/') {
     sendHtml(
       res,
       200,
@@ -573,12 +585,12 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
-  if (req.method === 'GET' && url.pathname === '/api/health') {
+  if (req.method === 'GET' && pathname === '/api/health') {
     sendJson(res, 200, { ok: true })
     return
   }
 
-  if (req.method === 'POST' && url.pathname === '/api/admin/ipc') {
+  if (req.method === 'POST' && pathname === '/api/admin/ipc') {
     if (!isAuthorized(req, url)) {
       fail(res, 401, 'Token requerido o invalido')
       return
@@ -593,9 +605,9 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { data })
     } catch (error) {
       const message = error?.message || String(error)
-      sendJson(res, 200, {
-        __ipc_error: true,
-        message,
+      sendJson(res, 500, {
+        ok: false,
+        error: message,
         stack: process.env.DEBUG === '1' ? (error?.stack || '') : ''
       })
     }
@@ -604,9 +616,9 @@ const server = http.createServer(async (req, res) => {
 
   if (parts[0] === 'api') {
     const isPublicRoute =
-      (req.method === 'GET' && url.pathname === '/api/horarios') ||
-      (req.method === 'GET' && url.pathname.startsWith('/api/vehiculos')) ||
-      (req.method === 'POST' && url.pathname === '/api/reservas')
+      (req.method === 'GET' && pathname === '/api/horarios') ||
+      (req.method === 'GET' && pathname.startsWith('/api/vehiculos')) ||
+      (req.method === 'POST' && pathname === '/api/reservas')
 
     if (!isPublicRoute && !isAuthorized(req, url)) {
       fail(res, 401, 'Token requerido o invalido')
@@ -623,14 +635,10 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  fail(res, 404, 'Not found')
+  fail(res, 404, 'Endpoint no encontrado')
 })
 
 server.listen(PORT, () => {
   console.log('[API] listening on port', PORT)
 })
-
-
-
-
 
