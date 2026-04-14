@@ -2,6 +2,7 @@ import http from 'node:http'
 import { URL } from 'node:url'
 import crypto from 'node:crypto'
 import dotenv from 'dotenv'
+import { Server as SocketIOServer } from 'socket.io'
 import { handleIpc } from './ipc-handlers.js'
 import * as reservas from './reservas.js'
 import * as horarios from './horarios.js'
@@ -22,11 +23,95 @@ import { isMysqlConfigured } from './db.js'
 dotenv.config({ path: SERVER_ENV_PATH })
 
 const PORT = Number(process.env.API_PORT || 3005)
+const RAW_BASE_PATH = String(process.env.API_BASE_PATH || '').trim()
+const API_BASE_PATH = RAW_BASE_PATH
+  ? `/${RAW_BASE_PATH.replace(/^\/+|\/+$/g, '')}`
+  : ''
+let io = null
 
 if (isMysqlConfigured()) {
   startAprontesGarantiaAlertScheduler()
 } else {
   console.warn('[AprontesGarantia] Scheduler deshabilitado: MYSQL no configurado.')
+}
+
+function cleanRealtimeMeta(meta = {}) {
+  return Object.fromEntries(
+    Object.entries(meta).filter(([, value]) => value !== '' && value !== null && typeof value !== 'undefined')
+  )
+}
+
+function emitRealtimeChange(scope, action, meta = {}) {
+  if (!io) return
+
+  const payload = {
+    scope,
+    action,
+    at: new Date().toISOString(),
+    ...cleanRealtimeMeta(meta)
+  }
+
+  io.emit('rr:sync', payload)
+
+  if (scope === 'reservas' || scope === 'horarios' || scope === 'horarios-aprontes') {
+    io.emit('rr:availability:changed', payload)
+  }
+}
+
+function emitRealtimeForIpc(channel, args = [], data = null) {
+  const first = args[0] || {}
+  const dataId = Number((data && typeof data === 'object' ? data.id : data) || 0) || undefined
+
+  if (['reservas:crear', 'reservas:borrar', 'reservas:mover', 'reservas:actualizar', 'reservas:actualizar-notas'].includes(channel)) {
+    const action = channel.endsWith(':crear')
+      ? 'created'
+      : channel.endsWith(':borrar')
+        ? 'deleted'
+        : channel.endsWith(':mover')
+          ? 'moved'
+          : channel.endsWith(':actualizar-notas')
+            ? 'notes-updated'
+            : 'updated'
+
+    emitRealtimeChange('reservas', action, {
+      source: 'ipc',
+      id: Number(first?.id || args[0] || dataId || 0) || undefined,
+      fecha: first?.fecha || first?.nuevaFecha,
+      hora: first?.hora || first?.nuevaHora
+    })
+    return
+  }
+
+  if (['aprontes:crear', 'aprontes:borrar', 'aprontes:actualizar'].includes(channel)) {
+    const action = channel.endsWith(':crear') ? 'created' : channel.endsWith(':borrar') ? 'deleted' : 'updated'
+    emitRealtimeChange('aprontes', action, {
+      source: 'ipc',
+      id: Number(first?.id || args[0] || dataId || 0) || undefined,
+      fecha: first?.fecha,
+      hora: first?.hora
+    })
+    return
+  }
+
+  if (channel.startsWith('horarios-aprontes:') && !['horarios-aprontes:base', 'horarios-aprontes:inactivos', 'horarios-aprontes:disponibles'].includes(channel)) {
+    const action = channel.endsWith(':crear') ? 'created' : channel.endsWith(':borrar') ? 'deleted' : 'updated'
+    emitRealtimeChange('horarios-aprontes', action, {
+      source: 'ipc',
+      id: Number(first?.id || args[0] || dataId || 0) || undefined,
+      hora: first?.hora
+    })
+    return
+  }
+
+  if (channel.startsWith('horarios:') && !['horarios:base', 'horarios:inactivos', 'horarios:disponibles', 'horarios:bloqueados'].includes(channel)) {
+    const action = channel.endsWith(':crear') ? 'created' : channel.endsWith(':borrar') ? 'deleted' : 'updated'
+    emitRealtimeChange('horarios', action, {
+      source: 'ipc',
+      id: Number(first?.id || args[0] || dataId || 0) || undefined,
+      fecha: first?.fecha,
+      hora: first?.hora
+    })
+  }
 }
 
 function applyCors(req, res) {
@@ -111,6 +196,21 @@ function isNumericId(value) {
   return /^[0-9]+$/.test(String(value || ''))
 }
 
+function normalizePathname(pathname = '/') {
+  let normalized = String(pathname || '/')
+
+  if (API_BASE_PATH && (normalized === API_BASE_PATH || normalized.startsWith(`${API_BASE_PATH}/`))) {
+    normalized = normalized.slice(API_BASE_PATH.length) || '/'
+  }
+
+  const parts = normalized.split('/').filter(Boolean)
+  if (parts[0] && parts[0] !== 'api' && parts[1] === 'api') {
+    normalized = '/' + parts.slice(1).join('/')
+  }
+
+  return normalized || '/'
+}
+
 async function handleRest(req, res, url, parts) {
   const method = req.method || 'GET'
   const resource = parts[1]
@@ -164,18 +264,34 @@ async function handleRest(req, res, url, parts) {
       if (parts.length === 2) {
         const body = await readJson(req)
         const id = await reservas.crearReserva(body)
+        emitRealtimeChange('reservas', 'created', {
+          source: 'rest',
+          id,
+          fecha: body?.fecha,
+          hora: body?.hora
+        })
         ok(res, { id }, 201)
         return true
       }
       if (parts[2] === 'mover') {
         const body = await readJson(req)
         await reservas.moverReserva(body?.id, body?.nuevaFecha, body?.nuevaHora)
+        emitRealtimeChange('reservas', 'moved', {
+          source: 'rest',
+          id: Number(body?.id || 0) || undefined,
+          fecha: body?.nuevaFecha,
+          hora: body?.nuevaHora
+        })
         ok(res, { ok: true })
         return true
       }
       if (isNumericId(parts[2]) && parts[3] === 'notas') {
         const body = await readJson(req)
         await reservas.actualizarNotasReserva(Number(parts[2]), body?.notas || '')
+        emitRealtimeChange('reservas', 'notes-updated', {
+          source: 'rest',
+          id: Number(parts[2])
+        })
         ok(res, { ok: true })
         return true
       }
@@ -185,12 +301,22 @@ async function handleRest(req, res, url, parts) {
       if (isNumericId(parts[2]) && parts[3] === 'notas') {
         const body = await readJson(req)
         await reservas.actualizarNotasReserva(Number(parts[2]), body?.notas || '')
+        emitRealtimeChange('reservas', 'notes-updated', {
+          source: 'rest',
+          id: Number(parts[2])
+        })
         ok(res, { ok: true })
         return true
       }
       if (isNumericId(parts[2])) {
         const body = await readJson(req)
         await reservas.actualizarReserva(Number(parts[2]), body)
+        emitRealtimeChange('reservas', 'updated', {
+          source: 'rest',
+          id: Number(parts[2]),
+          fecha: body?.fecha,
+          hora: body?.hora
+        })
         ok(res, { ok: true })
         return true
       }
@@ -198,6 +324,10 @@ async function handleRest(req, res, url, parts) {
 
     if (method === 'DELETE' && isNumericId(parts[2])) {
       await reservas.borrarReserva(Number(parts[2]))
+      emitRealtimeChange('reservas', 'deleted', {
+        source: 'rest',
+        id: Number(parts[2])
+      })
       ok(res, { ok: true })
       return true
     }
@@ -227,6 +357,12 @@ async function handleRest(req, res, url, parts) {
       if (parts.length === 2) {
         const body = await readJson(req)
         const id = await aprontes.crearApronte(body)
+        emitRealtimeChange('aprontes', 'created', {
+          source: 'rest',
+          id,
+          fecha: body?.fecha,
+          hora: body?.hora
+        })
         ok(res, { id }, 201)
         return true
       }
@@ -236,6 +372,12 @@ async function handleRest(req, res, url, parts) {
       if (isNumericId(parts[2])) {
         const body = await readJson(req)
         await aprontes.actualizarApronte(Number(parts[2]), body)
+        emitRealtimeChange('aprontes', 'updated', {
+          source: 'rest',
+          id: Number(parts[2]),
+          fecha: body?.fecha,
+          hora: body?.hora
+        })
         ok(res, { ok: true })
         return true
       }
@@ -243,6 +385,10 @@ async function handleRest(req, res, url, parts) {
 
     if (method === 'DELETE' && isNumericId(parts[2])) {
       await aprontes.borrarApronte(Number(parts[2]))
+      emitRealtimeChange('aprontes', 'deleted', {
+        source: 'rest',
+        id: Number(parts[2])
+      })
       ok(res, { ok: true })
       return true
     }
@@ -289,22 +435,38 @@ async function handleRest(req, res, url, parts) {
       if (parts.length === 2) {
         const body = await readJson(req)
         await horariosAprontes.crearHorarioApronte(body?.hora, body?.cupo)
+        emitRealtimeChange('horarios-aprontes', 'created', {
+          source: 'rest',
+          hora: body?.hora
+        })
         ok(res, { ok: true })
         return true
       }
       if (isNumericId(parts[2]) && parts[3] === 'activar') {
         await horariosAprontes.activarHorarioApronte(Number(parts[2]))
+        emitRealtimeChange('horarios-aprontes', 'updated', {
+          source: 'rest',
+          id: Number(parts[2])
+        })
         ok(res, { ok: true })
         return true
       }
       if (isNumericId(parts[2]) && parts[3] === 'desactivar') {
         await horariosAprontes.desactivarHorarioApronte(Number(parts[2]))
+        emitRealtimeChange('horarios-aprontes', 'updated', {
+          source: 'rest',
+          id: Number(parts[2])
+        })
         ok(res, { ok: true })
         return true
       }
       if (isNumericId(parts[2]) && parts[3] === 'cupo') {
         const body = await readJson(req)
         await horariosAprontes.actualizarCupoHorarioApronte(Number(parts[2]), body?.cupo)
+        emitRealtimeChange('horarios-aprontes', 'updated', {
+          source: 'rest',
+          id: Number(parts[2])
+        })
         ok(res, { ok: true })
         return true
       }
@@ -313,12 +475,20 @@ async function handleRest(req, res, url, parts) {
     if ((method === 'PUT' || method === 'PATCH') && isNumericId(parts[2]) && parts[3] === 'cupo') {
       const body = await readJson(req)
       await horariosAprontes.actualizarCupoHorarioApronte(Number(parts[2]), body?.cupo)
+      emitRealtimeChange('horarios-aprontes', 'updated', {
+        source: 'rest',
+        id: Number(parts[2])
+      })
       ok(res, { ok: true })
       return true
     }
 
     if (method === 'DELETE' && isNumericId(parts[2])) {
       await horariosAprontes.borrarHorarioApronte(Number(parts[2]))
+      emitRealtimeChange('horarios-aprontes', 'deleted', {
+        source: 'rest',
+        id: Number(parts[2])
+      })
       ok(res, { ok: true })
       return true
     }
@@ -362,28 +532,50 @@ async function handleRest(req, res, url, parts) {
       if (parts.length === 2) {
         const body = await readJson(req)
         await horarios.crearHorario(body?.hora)
+        emitRealtimeChange('horarios', 'created', {
+          source: 'rest',
+          hora: body?.hora
+        })
         ok(res, { ok: true })
         return true
       }
       if (parts[2] === 'bloquear') {
         const body = await readJson(req)
         await horarios.bloquearHorario(body?.fecha, body?.hora, body?.motivo)
+        emitRealtimeChange('horarios', 'updated', {
+          source: 'rest',
+          fecha: body?.fecha,
+          hora: body?.hora
+        })
         ok(res, { ok: true })
         return true
       }
       if (parts[2] === 'desbloquear') {
         const body = await readJson(req)
         await horarios.desbloquearHorario(body?.fecha, body?.hora)
+        emitRealtimeChange('horarios', 'updated', {
+          source: 'rest',
+          fecha: body?.fecha,
+          hora: body?.hora
+        })
         ok(res, { ok: true })
         return true
       }
       if (isNumericId(parts[2]) && parts[3] === 'activar') {
         await horarios.activarHorario(Number(parts[2]))
+        emitRealtimeChange('horarios', 'updated', {
+          source: 'rest',
+          id: Number(parts[2])
+        })
         ok(res, { ok: true })
         return true
       }
       if (isNumericId(parts[2]) && parts[3] === 'desactivar') {
         await horarios.desactivarHorario(Number(parts[2]))
+        emitRealtimeChange('horarios', 'updated', {
+          source: 'rest',
+          id: Number(parts[2])
+        })
         ok(res, { ok: true })
         return true
       }
@@ -391,6 +583,10 @@ async function handleRest(req, res, url, parts) {
 
     if (method === 'DELETE' && isNumericId(parts[2])) {
       await horarios.borrarHorarioPermanente(Number(parts[2]))
+      emitRealtimeChange('horarios', 'deleted', {
+        source: 'rest',
+        id: Number(parts[2])
+      })
       ok(res, { ok: true })
       return true
     }
@@ -562,23 +758,30 @@ const server = http.createServer(async (req, res) => {
   }
 
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
-  const parts = url.pathname.split('/').filter(Boolean)
+  const pathname = normalizePathname(url.pathname)
+  const parts = pathname.split('/').filter(Boolean)
 
-  if (req.method === 'GET' && url.pathname === '/') {
+  if (req.method === 'GET' && pathname === '/') {
     sendHtml(
       res,
       200,
-      '<!doctype html><html><head><meta charset="utf-8"><title>reserveRosas API</title></head><body><h1>reserveRosas API</h1><p>Servicio activo.</p><p>Health: <a href="/api/health">/api/health</a></p></body></html>'
+      `<!doctype html><html><head><meta charset="utf-8"><title>reserveRosas API</title></head><body><h1>reserveRosas API</h1><p>Servicio activo.</p><p>Health: <a href="${API_BASE_PATH}/api/health">${API_BASE_PATH}/api/health</a></p></body></html>`
     )
     return
   }
 
-  if (req.method === 'GET' && url.pathname === '/api/health') {
-    sendJson(res, 200, { ok: true })
+  if (req.method === 'GET' && pathname === '/api/health') {
+    sendJson(res, 200, {
+      ok: true,
+      realtime: true,
+      basePath: API_BASE_PATH || '/',
+      socketPath: `${API_BASE_PATH || ''}/socket.io`,
+      transports: ['websocket', 'polling']
+    })
     return
   }
 
-  if (req.method === 'POST' && url.pathname === '/api/admin/ipc') {
+  if (req.method === 'POST' && pathname === '/api/admin/ipc') {
     if (!isAuthorized(req, url)) {
       fail(res, 401, 'Token requerido o invalido')
       return
@@ -590,6 +793,7 @@ const server = http.createServer(async (req, res) => {
 
     try {
       const data = await handleIpc(channel, args)
+      emitRealtimeForIpc(channel, args, data)
       sendJson(res, 200, { data })
     } catch (error) {
       const message = error?.message || String(error)
@@ -604,9 +808,9 @@ const server = http.createServer(async (req, res) => {
 
   if (parts[0] === 'api') {
     const isPublicRoute =
-      (req.method === 'GET' && url.pathname === '/api/horarios') ||
-      (req.method === 'GET' && url.pathname.startsWith('/api/vehiculos')) ||
-      (req.method === 'POST' && url.pathname === '/api/reservas')
+      (req.method === 'GET' && pathname === '/api/horarios') ||
+      (req.method === 'GET' && pathname.startsWith('/api/vehiculos')) ||
+      (req.method === 'POST' && pathname === '/api/reservas')
 
     if (!isPublicRoute && !isAuthorized(req, url)) {
       fail(res, 401, 'Token requerido o invalido')
@@ -624,6 +828,22 @@ const server = http.createServer(async (req, res) => {
   }
 
   fail(res, 404, 'Not found')
+})
+
+io = new SocketIOServer(server, {
+  path: `${API_BASE_PATH || ''}/socket.io`,
+  cors: {
+    origin: true,
+    methods: ['GET', 'POST']
+  },
+  transports: ['websocket', 'polling']
+})
+
+io.on('connection', (socket) => {
+  socket.emit('rr:connected', {
+    ok: true,
+    at: new Date().toISOString()
+  })
 })
 
 server.listen(PORT, () => {
