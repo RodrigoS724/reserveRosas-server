@@ -46,17 +46,6 @@ function normalizeOptionalDate(value) {
   return normalizeDate(raw)
 }
 
-function ensureNotFutureDate(dateIso) {
-  const today = new Date()
-  const y = today.getFullYear()
-  const m = String(today.getMonth() + 1).padStart(2, '0')
-  const d = String(today.getDate()).padStart(2, '0')
-  const todayIso = `${y}-${m}-${d}`
-  if (String(dateIso || '') > todayIso) {
-    throw new Error('No se pueden seleccionar fechas de aprontes posteriores a hoy')
-  }
-}
-
 async function ensureAprontesSchema() {
   if (schemaReady) return
 
@@ -66,6 +55,7 @@ async function ensureAprontesSchema() {
     `ALTER TABLE aprontes ADD COLUMN correo_alerta_garantia VARCHAR(255)`,
     `ALTER TABLE aprontes ADD COLUMN dias_alerta_garantia INT DEFAULT 7`,
     `ALTER TABLE aprontes ADD COLUMN fecha_alerta_garantia DATE NULL`,
+    `ALTER TABLE aprontes ADD COLUMN numero_motor VARCHAR(100)`,
     `ALTER TABLE aprontes ADD COLUMN garantia_espera_desde DATETIME NULL`,
     `ALTER TABLE aprontes ADD COLUMN garantia_notificada TINYINT DEFAULT 0`,
     `ALTER TABLE aprontes ADD COLUMN garantia_notificada_at DATETIME NULL`
@@ -111,6 +101,7 @@ function normalizeAprontePayload(data) {
     observaciones: cleanText(data.observaciones, 500),
     marca: cleanText(data.marca, 100),
     modelo: cleanText(data.modelo, 100),
+    numero_motor: cleanText(data.numero_motor, 100),
     factura: cleanText(data.factura, 100),
     estado,
     repuestos_garantia: cleanText(data.repuestos_garantia, 1000),
@@ -155,7 +146,6 @@ export async function crearApronte(data) {
   const payload = normalizeAprontePayload(data)
   const fechaNormalizada = normalizeDate(payload.fecha)
   const horaNormalizada = normalizeHora(payload.hora)
-  ensureNotFutureDate(fechaNormalizada)
 
   return withTransaction(async (conn) => {
     await validarCupoDisponible(conn, fechaNormalizada, horaNormalizada)
@@ -164,11 +154,11 @@ export async function crearApronte(data) {
       `INSERT INTO aprontes (
         nombre, fecha, hora,
         telefono, localidad, observaciones,
-        marca, modelo, factura,
+        marca, modelo, numero_motor, factura,
         estado, repuestos_garantia,
         correo_alerta_garantia, dias_alerta_garantia, fecha_alerta_garantia,
         garantia_espera_desde, garantia_notificada, garantia_notificada_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         payload.nombre,
         fechaNormalizada,
@@ -178,6 +168,7 @@ export async function crearApronte(data) {
         payload.observaciones,
         payload.marca,
         payload.modelo,
+        payload.numero_motor,
         payload.factura,
         payload.estado,
         payload.repuestos_garantia,
@@ -250,7 +241,6 @@ export async function actualizarApronte(id, data) {
     const payload = normalizeAprontePayload(merged)
     const fechaNormalizada = normalizeDate(payload.fecha)
     const horaNormalizada = normalizeHora(payload.hora)
-    ensureNotFutureDate(fechaNormalizada)
     const estadoAnterior = normalizeEstadoApronte(anterior.estado)
     const estadoNuevo = normalizeEstadoApronte(payload.estado)
     const entraEspera = estadoNuevo === 'ENTREGADA ESPERA DE GARANTIA' && estadoAnterior !== 'ENTREGADA ESPERA DE GARANTIA'
@@ -265,7 +255,7 @@ export async function actualizarApronte(id, data) {
       `UPDATE aprontes
        SET nombre = ?, fecha = ?, hora = ?,
            telefono = ?, localidad = ?, observaciones = ?,
-           marca = ?, modelo = ?, factura = ?,
+           marca = ?, modelo = ?, numero_motor = ?, factura = ?,
            estado = ?, repuestos_garantia = ?,
            correo_alerta_garantia = ?, dias_alerta_garantia = ?, fecha_alerta_garantia = ?,
            garantia_espera_desde = CASE
@@ -292,6 +282,7 @@ export async function actualizarApronte(id, data) {
         payload.observaciones,
         payload.marca,
         payload.modelo,
+        payload.numero_motor,
         payload.factura,
         estadoNuevo,
         payload.repuestos_garantia,

@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS aprontes (
   observaciones TEXT,
   marca VARCHAR(100),
   modelo VARCHAR(100),
+  numero_motor VARCHAR(100),
   factura VARCHAR(100),
   estado VARCHAR(60) DEFAULT 'APRONTE',
   repuestos_garantia TEXT,
