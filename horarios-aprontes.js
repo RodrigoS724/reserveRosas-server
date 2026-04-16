@@ -17,6 +17,18 @@ function horaEnMinutos(hora) {
   return h * 60 + m
 }
 
+function obtenerHoyIsoLocal() {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+function esFechaPasada(fechaIso) {
+  return String(fechaIso || '') < obtenerHoyIsoLocal()
+}
+
 function aplicarReglaFinDeSemana(fechaIso, rows) {
   const day = new Date(`${fechaIso}T00:00:00`).getDay()
   if (day === 0) {
@@ -50,6 +62,9 @@ export async function obtenerHorariosAprontesInactivos() {
 
 export async function obtenerHorariosAprontesDisponibles(fecha) {
   const fechaNormalizada = normalizeDate(fecha)
+  if (esFechaPasada(fechaNormalizada)) {
+    return []
+  }
   const rows = await execute(
     `SELECT h.id, h.hora, h.cupo,
             IFNULL(a.usados, 0) AS usados,
