@@ -113,6 +113,26 @@ function normalizeAprontePayload(data) {
   }
 }
 
+function horaEnMinutos(hora) {
+  const parts = String(hora || '').split(':')
+  const h = Number(parts[0])
+  const m = Number(parts[1])
+  if (!Number.isFinite(h) || !Number.isFinite(m)) {
+    throw new Error('Formato de hora invalido')
+  }
+  return h * 60 + m
+}
+
+function validarReglaFinDeSemana(fechaIso, hora) {
+  const day = new Date(`${fechaIso}T00:00:00`).getDay()
+  if (day === 0) {
+    throw new Error('Los domingos no se agendan aprontes')
+  }
+  if (day === 6 && horaEnMinutos(hora) > 12 * 60) {
+    throw new Error('Los sabados solo se permiten horarios hasta las 12:00')
+  }
+}
+
 async function validarCupoDisponible(conn, fecha, hora, excludeId = null) {
   const [horRows] = await conn.execute(
     'SELECT cupo FROM horarios_aprontes WHERE hora = ? AND activo = 1',
@@ -146,6 +166,7 @@ export async function crearApronte(data) {
   const payload = normalizeAprontePayload(data)
   const fechaNormalizada = normalizeDate(payload.fecha)
   const horaNormalizada = normalizeHora(payload.hora)
+  validarReglaFinDeSemana(fechaNormalizada, horaNormalizada)
 
   return withTransaction(async (conn) => {
     await validarCupoDisponible(conn, fechaNormalizada, horaNormalizada)
@@ -241,6 +262,7 @@ export async function actualizarApronte(id, data) {
     const payload = normalizeAprontePayload(merged)
     const fechaNormalizada = normalizeDate(payload.fecha)
     const horaNormalizada = normalizeHora(payload.hora)
+    validarReglaFinDeSemana(fechaNormalizada, horaNormalizada)
     const estadoAnterior = normalizeEstadoApronte(anterior.estado)
     const estadoNuevo = normalizeEstadoApronte(payload.estado)
     const entraEspera = estadoNuevo === 'ENTREGADA ESPERA DE GARANTIA' && estadoAnterior !== 'ENTREGADA ESPERA DE GARANTIA'

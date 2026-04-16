@@ -9,6 +9,25 @@ function normalizeCupo(value) {
   return Math.floor(cupo)
 }
 
+function horaEnMinutos(hora) {
+  const parts = String(hora || '').split(':')
+  const h = Number(parts[0])
+  const m = Number(parts[1])
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return -1
+  return h * 60 + m
+}
+
+function aplicarReglaFinDeSemana(fechaIso, rows) {
+  const day = new Date(`${fechaIso}T00:00:00`).getDay()
+  if (day === 0) {
+    return []
+  }
+  if (day !== 6) {
+    return rows
+  }
+  return (rows || []).filter((r) => horaEnMinutos(r?.hora) <= 12 * 60)
+}
+
 export async function obtenerHorariosAprontesBase() {
   const rows = await execute(
     `SELECT id, hora, cupo, activo
@@ -46,7 +65,7 @@ export async function obtenerHorariosAprontesDisponibles(fecha) {
      ORDER BY h.hora`,
     [fechaNormalizada]
   )
-  return rows
+  return aplicarReglaFinDeSemana(fechaNormalizada, rows)
 }
 
 export async function crearHorarioApronte(hora, cupo = 1) {
