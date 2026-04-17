@@ -6,7 +6,7 @@ if (major < 18) {
 }
 
 Promise.resolve()
-  .then(() => new Function('return import("./index.js")')())
+  .then(() => new Function('return import("./api-server.js")')())
   .catch((error) => {
     console.error('[Startup] Error cargando la API ESM:', error)
     process.exit(1)
