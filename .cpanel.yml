@@ -1,8 +1,6 @@
 deployment:
   tasks:
     - export DEPLOYPATH=/home/rosasuy/reserva-server/
-    - /bin/mkdir -p $DEPLOYPATH
     - /bin/mkdir -p $DEPLOYPATH/tmp
-    - /bin/cp -R * $DEPLOYPATH
     - cd $DEPLOYPATH && npm install --omit=dev
     - /bin/touch $DEPLOYPATH/tmp/restart.txt
