@@ -22,6 +22,12 @@ import { isMysqlConfigured } from './db.js'
 dotenv.config({ path: SERVER_ENV_PATH })
 
 const PORT = Number(process.env.API_PORT || 3005)
+const HEALTH_INFO = {
+  ok: true,
+  service: 'reserveRosas-server',
+  aprontesRules: 'allow-future-disallow-past',
+  deployPaths: ['/home/rosasuy/reservas/', '/home/rosasuy/reserva/']
+}
 
 if (isMysqlConfigured()) {
   startAprontesGarantiaAlertScheduler()
@@ -586,7 +592,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && pathname === '/api/health') {
-    sendJson(res, 200, { ok: true })
+    sendJson(res, 200, HEALTH_INFO)
     return
   }
 
