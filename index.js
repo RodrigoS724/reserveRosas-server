@@ -26,7 +26,7 @@ const HEALTH_INFO = {
   ok: true,
   service: 'reserveRosas-server',
   aprontesRules: 'allow-future-disallow-past',
-  deployPaths: ['/home/rosasuy/reservas/', '/home/rosasuy/reserva/']
+  deployPaths: ['/home/rosasuy/reserva-server/']
 }
 
 if (isMysqlConfigured()) {

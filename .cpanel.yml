@@ -1,14 +1,8 @@
 deployment:
   tasks:
-    - export DEPLOYPATH=/home/rosasuy/reservas/
-    - export LEGACY_DEPLOYPATH=/home/rosasuy/reserva/
+    - export DEPLOYPATH=/home/rosasuy/reserva-server/
     - /bin/mkdir -p $DEPLOYPATH
     - /bin/mkdir -p $DEPLOYPATH/tmp
     - /bin/cp -R * $DEPLOYPATH
     - cd $DEPLOYPATH && npm install --omit=dev
     - /bin/touch $DEPLOYPATH/tmp/restart.txt
-    - /bin/mkdir -p $LEGACY_DEPLOYPATH
-    - /bin/mkdir -p $LEGACY_DEPLOYPATH/tmp
-    - /bin/cp -R * $LEGACY_DEPLOYPATH
-    - cd $LEGACY_DEPLOYPATH && npm install --omit=dev
-    - /bin/touch $LEGACY_DEPLOYPATH/tmp/restart.txt
