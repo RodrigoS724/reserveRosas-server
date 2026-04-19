@@ -1,6 +1,27 @@
 import { execute, withTransaction } from './db.js'
 import { registrarMarcaModelo } from './motos.js'
 import { normalizeDate, normalizeHora, normalizeMatricula, normalizeText } from './utils.js'
+import {
+  assertCanCreateReserva,
+  assertCanDeleteReserva,
+  assertCanEditReservaNotes,
+  assertCanMoveReserva,
+  getActor,
+  isTallerRole
+} from './access-control.js'
+
+function buildReservaMutationInput(anterior, incoming, actorRole) {
+  if (isTallerRole(actorRole)) {
+    return {
+      ...anterior,
+      estado: incoming?.estado ?? anterior?.estado
+    }
+  }
+  return {
+    ...anterior,
+    ...incoming
+  }
+}
 
 function canonicalTipoTurno(value) {
   const v = normalizeText(value)
@@ -139,6 +160,8 @@ function validateRequired(data) {
 }
 
 export async function crearReserva(data) {
+  const actor = getActor(data)
+  assertCanCreateReserva(actor.role)
   validateRequired(data)
   validarReserva(data)
   validarCondicionesSubtipo(data)
@@ -261,33 +284,43 @@ export async function obtenerReserva(id) {
   return rows[0] ?? null
 }
 
-export async function borrarReserva(id) {
+export async function borrarReserva(input) {
+  const payload = typeof input === 'object' && input !== null ? input : { id: input }
+  const actor = getActor(payload)
+  assertCanDeleteReserva(actor.role)
+  const reservaId = Number(payload?.id || input)
   return withTransaction(async (conn) => {
-    const [rows] = await conn.execute('SELECT * FROM reservas WHERE id = ?', [id])
+    const [rows] = await conn.execute('SELECT * FROM reservas WHERE id = ?', [reservaId])
     const reserva = rows[0]
     if (!reserva) return
 
     // Delete history rows first to avoid FK constraint violation
-    await conn.execute('DELETE FROM historial_reservas WHERE reserva_id = ?', [id])
-    await conn.execute('DELETE FROM reservas WHERE id = ?', [id])
+    await conn.execute('DELETE FROM historial_reservas WHERE reserva_id = ?', [reservaId])
+    await conn.execute('DELETE FROM reservas WHERE id = ?', [reservaId])
   })
 }
 
-export async function moverReserva(id, nuevaFecha, nuevaHora) {
+export async function moverReserva(idOrPayload, nuevaFecha, nuevaHora) {
+  const payload = typeof idOrPayload === 'object' && idOrPayload !== null
+    ? idOrPayload
+    : { id: idOrPayload, nuevaFecha, nuevaHora }
+  const actor = getActor(payload)
+  assertCanMoveReserva(actor.role)
+  const reservaId = Number(payload?.id || idOrPayload)
   return withTransaction(async (conn) => {
     const [rows] = await conn.execute(
       'SELECT fecha, hora FROM reservas WHERE id = ?',
-      [id]
+      [reservaId]
     )
     const anterior = rows[0]
     if (!anterior) return
 
-    const fechaNormalizada = normalizeDate(nuevaFecha)
-    const horaNormalizada = nuevaHora ? normalizeHora(nuevaHora) : null
+    const fechaNormalizada = normalizeDate(payload?.nuevaFecha)
+    const horaNormalizada = payload?.nuevaHora ? normalizeHora(payload.nuevaHora) : null
 
     await conn.execute(
       'UPDATE reservas SET fecha = ?, hora = COALESCE( ?, hora) WHERE id = ?',
-      [fechaNormalizada, horaNormalizada, id]
+      [fechaNormalizada, horaNormalizada, reservaId]
     )
 
     if (fechaNormalizada !== anterior.fecha) {
@@ -295,7 +328,7 @@ export async function moverReserva(id, nuevaFecha, nuevaHora) {
         `INSERT INTO historial_reservas
          (reserva_id, campo, valor_anterior, valor_nuevo, fecha)
          VALUES ( ?, 'fecha', ?, ?, NOW())`,
-        [id, anterior.fecha, fechaNormalizada]
+        [reservaId, anterior.fecha, fechaNormalizada]
       )
     }
 
@@ -304,25 +337,29 @@ export async function moverReserva(id, nuevaFecha, nuevaHora) {
         `INSERT INTO historial_reservas
          (reserva_id, campo, valor_anterior, valor_nuevo, fecha)
          VALUES ( ?, 'hora', ?, ?, NOW())`,
-        [id, anterior.hora, horaNormalizada]
+        [reservaId, anterior.hora, horaNormalizada]
       )
     }
   })
 }
 
-export async function actualizarReserva(id, reserva) {
-  const reservaId = Number(id || reserva?.id || 0)
+export async function actualizarReserva(idOrPayload, reserva) {
+  const payload = typeof idOrPayload === 'object' && idOrPayload !== null
+    ? idOrPayload
+    : (reserva || {})
+  const actor = getActor(payload)
+  const reservaId = Number((typeof idOrPayload === 'object' ? idOrPayload?.id : idOrPayload) || payload?.id || 0)
   if (!reservaId) {
     throw new Error('ID de reserva invalido')
   }
 
-  const matriculaNormalizada = normalizeMatricula(reserva?.matricula || '').slice(0, 10)
+  const matriculaNormalizada = normalizeMatricula(payload?.matricula || '').slice(0, 10)
   if (matriculaNormalizada && !/^[A-Z0-9]{3,10}$/.test(matriculaNormalizada)) {
     throw new Error('Matricula invalida')
   }
 
-  const fechaNormalizada = normalizeDate(reserva?.fecha)
-  const horaNormalizada = normalizeHora(reserva?.hora)
+  const fechaNormalizada = normalizeDate(payload?.fecha)
+  const horaNormalizada = normalizeHora(payload?.hora)
 
   return withTransaction(async (conn) => {
     const [rows] = await conn.execute(
@@ -335,14 +372,12 @@ export async function actualizarReserva(id, reserva) {
     const anterior = rows[0]
     if (!anterior) return
 
-    const merged = {
-      ...anterior,
-      ...reserva,
-      fecha: fechaNormalizada,
-      hora: horaNormalizada,
-      matricula: matriculaNormalizada
-    }
+    const merged = buildReservaMutationInput(anterior, payload, actor.role)
     const normalized = normalizeReservaInput({ ...merged })
+    const matriculaNormalizada = normalizeMatricula(merged?.matricula || '').slice(0, 10)
+    if (matriculaNormalizada && !/^[A-Z0-9]{3,10}$/.test(matriculaNormalizada)) {
+      throw new Error('Matricula invalida')
+    }
     const payload = {
       nombre: normalized.nombre ?? '',
       cedula: normalized.cedula ?? '',
@@ -350,7 +385,7 @@ export async function actualizarReserva(id, reserva) {
       marca: normalized.marca ?? '',
       modelo: normalized.modelo ?? '',
       km: normalized.km ?? '',
-      matricula: matriculaNormalizada,
+      matricula: matriculaNormalizada || anterior.matricula || '',
       tipo_turno: normalized.tipo_turno ?? '',
       particular_tipo: normalized.particular_tipo ?? null,
       garantia_tipo: normalized.garantia_tipo ?? null,
@@ -359,7 +394,7 @@ export async function actualizarReserva(id, reserva) {
       garantia_problema: normalized.garantia_problema ?? null,
       fecha: fechaNormalizada,
       hora: horaNormalizada,
-      estado: reserva?.estado ?? anterior.estado,
+      estado: merged?.estado ?? anterior.estado,
       detalles: normalized.detalles ?? ''
     }
 
@@ -442,17 +477,22 @@ export async function obtenerTodasLasReservas() {
 }
 
 export async function actualizarNotasReserva(id, notas) {
+  const payload = typeof id === 'object' && id !== null ? id : { id, notas }
+  const actor = getActor(payload)
+  assertCanEditReservaNotes(actor.role)
+  const reservaId = Number(payload?.id || id)
+  const nextNotas = String(payload?.notas ?? notas ?? '')
   return withTransaction(async (conn) => {
-    const [rows] = await conn.execute('SELECT notas FROM reservas WHERE id = ?', [id])
+    const [rows] = await conn.execute('SELECT notas FROM reservas WHERE id = ?', [reservaId])
     const anterior = rows[0]
     if (!anterior) return
 
-    await conn.execute('UPDATE reservas SET notas = ? WHERE id = ?', [notas, id])
+    await conn.execute('UPDATE reservas SET notas = ? WHERE id = ?', [nextNotas, reservaId])
     await conn.execute(
       `INSERT INTO historial_reservas
        (reserva_id, campo, valor_anterior, valor_nuevo, fecha)
        VALUES ( ?, 'notas', ?, ?, NOW())`,
-      [id, anterior.notas || '', notas]
+      [reservaId, anterior.notas || '', nextNotas]
     )
   })
 }

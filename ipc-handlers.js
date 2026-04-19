@@ -13,17 +13,20 @@ import * as motos from './motos.js'
 import * as registros from './registros.js'
 export async function handleIpc(channel, args) {
   switch (channel) {
+    case '__ping__':
+      return { ok: true, pong: true }
+
     // Reservas
     case 'reservas:crear':
       return reservas.crearReserva(args[0] || {})
     case 'reservas:obtener':
       return reservas.obtenerReserva(args[0])
     case 'reservas:borrar':
-      return reservas.borrarReserva(args[0])
+      return reservas.borrarReserva(args[0] || {})
     case 'reservas:mover':
-      return reservas.moverReserva(args[0]?.id, args[0]?.nuevaFecha, args[0]?.nuevaHora)
+      return reservas.moverReserva(args[0] || {})
     case 'reservas:actualizar':
-      return reservas.actualizarReserva(args[0]?.id, args[0])
+      return reservas.actualizarReserva(args[0] || {})
     case 'reservas:semana':
       return reservas.obtenerReservasSemana(args[0]?.desde, args[0]?.hasta)
     case 'reservas:dia':
@@ -31,7 +34,7 @@ export async function handleIpc(channel, args) {
     case 'reservas:todas':
       return reservas.obtenerTodasLasReservas()
     case 'reservas:actualizar-notas':
-      return reservas.actualizarNotasReserva(args[0], args[1])
+      return reservas.actualizarNotasReserva(args[0] || {})
     case 'reservas:cambios':
       return reservas.obtenerCambiosReservas(args[0]?.since, args[0]?.lastId, args[0]?.limit)
 
@@ -41,9 +44,9 @@ export async function handleIpc(channel, args) {
     case 'aprontes:obtener':
       return aprontes.obtenerApronte(args[0])
     case 'aprontes:borrar':
-      return aprontes.borrarApronte(args[0])
+      return aprontes.borrarApronte(args[0] || {})
     case 'aprontes:actualizar':
-      return aprontes.actualizarApronte(args[0]?.id, args[0])
+      return aprontes.actualizarApronte(args[0]?.id, args[0] || {})
     case 'aprontes:fecha':
       return aprontes.obtenerAprontesPorFecha(args[0])
     case 'aprontes:todas':

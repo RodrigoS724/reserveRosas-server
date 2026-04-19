@@ -1,64 +1,12 @@
 import crypto from 'node:crypto'
 import { execute } from './db.js'
 import { registrarAuditoria } from './auditoria.js'
+import { ALL_PERMISSIONS as PermissionsCatalog, getDefaultPermissions, normalizePermissions, normalizeRole, parsePermissions } from './access-control.js'
 
 const LOGIN_WINDOW_MS = Number(process.env.AUTH_LOGIN_WINDOW_MS || 10 * 60 * 1000)
 const LOGIN_LOCK_MS = Number(process.env.AUTH_LOGIN_LOCK_MS || 15 * 60 * 1000)
 const LOGIN_MAX_ATTEMPTS = Number(process.env.AUTH_LOGIN_MAX_ATTEMPTS || 5)
 const loginAttempts = new Map()
-
-const ALL_PERMISSIONS = [
-  'agenda',
-  'reservas',
-  'aprontes',
-  'historial',
-  'ajustes',
-  'vehiculos',
-  'config',
-  'usuarios',
-  'auditoria'
-]
-
-function normalizeRole(role) {
-  if (role === 'superadmin' || role === 'super' || role === 'admin' || role === 'user') {
-    return role
-  }
-  return 'user'
-}
-
-export function getDefaultPermissions(role) {
-  if (role === 'superadmin') return [...ALL_PERMISSIONS]
-  if (role === 'super') return [...ALL_PERMISSIONS]
-  if (role === 'admin') return ['agenda', 'reservas', 'aprontes', 'historial', 'ajustes', 'vehiculos']
-  return ['reservas', 'historial']
-}
-
-function normalizePermissions(role, permissions) {
-  const normalizedRole = normalizeRole(role)
-  const allowed = new Set(ALL_PERMISSIONS)
-  if (!permissions || permissions.length === 0) {
-    return getDefaultPermissions(normalizedRole)
-  }
-  const unique = new Set()
-  for (const p of permissions) {
-    if (allowed.has(p)) unique.add(p)
-  }
-  return Array.from(unique)
-}
-
-function parsePermissions(raw, role) {
-  const normalizedRole = normalizeRole(role)
-  if (!raw) return getDefaultPermissions(normalizedRole)
-  try {
-    const parsed = JSON.parse(raw)
-    if (Array.isArray(parsed)) {
-      return normalizePermissions(normalizedRole, parsed)
-    }
-    return getDefaultPermissions(normalizedRole)
-  } catch {
-    return getDefaultPermissions(normalizedRole)
-  }
-}
 
 function hashPassword(password) {
   const salt = crypto.randomBytes(16)
@@ -397,8 +345,6 @@ export async function cambiarPasswordPropia(data) {
 
   return { ok: true }
 }
-
-export const PermissionsCatalog = ALL_PERMISSIONS
 
 async function obtenerUsernamePorId(id) {
   const rows = await execute('SELECT username FROM usuarios WHERE id = ? LIMIT 1', [id])

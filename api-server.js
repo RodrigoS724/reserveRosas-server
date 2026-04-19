@@ -26,7 +26,8 @@ const HEALTH_INFO = {
   ok: true,
   service: 'reserveRosas-server',
   aprontesRules: 'allow-future-disallow-past',
-  deployPaths: ['/home/rosasuy/reserva-server/']
+  //deployPaths: ['/home/rosasuy/dev-server/'] //dev
+  deployPaths: ['/home/rosasuy/reserva-server/'] //prod
 }
 
 if (isMysqlConfigured()) {
@@ -186,13 +187,13 @@ async function handleRest(req, res, url, parts) {
       }
       if (parts[2] === 'mover') {
         const body = await readJson(req)
-        await reservas.moverReserva(body?.id, body?.nuevaFecha, body?.nuevaHora)
+        await reservas.moverReserva(body || {})
         ok(res, { ok: true })
         return true
       }
       if (isNumericId(parts[2]) && parts[3] === 'notas') {
         const body = await readJson(req)
-        await reservas.actualizarNotasReserva(Number(parts[2]), body?.notas || '')
+        await reservas.actualizarNotasReserva({ id: Number(parts[2]), ...(body || {}) })
         ok(res, { ok: true })
         return true
       }
@@ -201,20 +202,20 @@ async function handleRest(req, res, url, parts) {
     if (method === 'PUT' || method === 'PATCH') {
       if (isNumericId(parts[2]) && parts[3] === 'notas') {
         const body = await readJson(req)
-        await reservas.actualizarNotasReserva(Number(parts[2]), body?.notas || '')
+        await reservas.actualizarNotasReserva({ id: Number(parts[2]), ...(body || {}) })
         ok(res, { ok: true })
         return true
       }
       if (isNumericId(parts[2])) {
         const body = await readJson(req)
-        await reservas.actualizarReserva(Number(parts[2]), body)
+        await reservas.actualizarReserva({ id: Number(parts[2]), ...(body || {}) })
         ok(res, { ok: true })
         return true
       }
     }
 
     if (method === 'DELETE' && isNumericId(parts[2])) {
-      await reservas.borrarReserva(Number(parts[2]))
+      await reservas.borrarReserva({ id: Number(parts[2]) })
       ok(res, { ok: true })
       return true
     }
@@ -252,14 +253,14 @@ async function handleRest(req, res, url, parts) {
     if (method === 'PUT' || method === 'PATCH') {
       if (isNumericId(parts[2])) {
         const body = await readJson(req)
-        await aprontes.actualizarApronte(Number(parts[2]), body)
+        await aprontes.actualizarApronte(Number(parts[2]), body || {})
         ok(res, { ok: true })
         return true
       }
     }
 
     if (method === 'DELETE' && isNumericId(parts[2])) {
-      await aprontes.borrarApronte(Number(parts[2]))
+      await aprontes.borrarApronte({ id: Number(parts[2]) })
       ok(res, { ok: true })
       return true
     }
