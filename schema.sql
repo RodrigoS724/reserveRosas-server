@@ -135,3 +135,33 @@ CREATE TABLE IF NOT EXISTS motos_catalogo (
   UNIQUE KEY uniq_motos_catalogo (marca, modelo)
 );
 
+CREATE TABLE IF NOT EXISTS ventas_motos (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  fecha DATE NOT NULL,
+  apronte_id BIGINT NULL,
+  marca VARCHAR(100) NOT NULL,
+  modelo VARCHAR(100) NOT NULL,
+  cliente VARCHAR(255) NOT NULL,
+  telefono VARCHAR(30),
+  comentario TEXT,
+  vendedor VARCHAR(120),
+  estado VARCHAR(60) NOT NULL DEFAULT 'en_apronte',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_ventas_motos_fecha (fecha),
+  INDEX idx_ventas_motos_estado (estado)
+);
+
+CREATE TABLE IF NOT EXISTS ventas_creditos (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  fecha DATE NOT NULL,
+  localidad VARCHAR(120) NOT NULL,
+  telefono VARCHAR(30) NOT NULL,
+  monto_solicitado DECIMAL(12,2) NOT NULL DEFAULT 0,
+  concreta_venta TINYINT NOT NULL DEFAULT 0,
+  financieras_json TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_ventas_creditos_fecha (fecha)
+);
+

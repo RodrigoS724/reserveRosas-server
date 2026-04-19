@@ -1,7 +1,7 @@
 import { execute } from './db.js'
 
 function cleanText(value, maxLen = 100) {
-  const text = String(value || '').trim()
+  const text = String(value || '').trim().toLowerCase()
   return text.length > maxLen ? text.slice(0, maxLen) : text
 }
 
@@ -29,7 +29,7 @@ export async function obtenerMarcasMoto() {
      WHERE marca IS NOT NULL AND marca <> ''
      ORDER BY marca`
   )
-  return (rows || []).map((r) => String(r?.marca || '').trim()).filter(Boolean)
+  return (rows || []).map((r) => String(r?.marca || '').trim().toLowerCase()).filter(Boolean)
 }
 
 export async function obtenerModelosMoto(marca) {
@@ -38,11 +38,11 @@ export async function obtenerModelosMoto(marca) {
     const rows = await execute(
       `SELECT DISTINCT modelo
        FROM motos_catalogo
-       WHERE marca = ? AND modelo IS NOT NULL AND modelo <> ''
+       WHERE LOWER(marca) = ? AND modelo IS NOT NULL AND modelo <> ''
        ORDER BY modelo`,
       [marcaOk]
     )
-    return (rows || []).map((r) => String(r?.modelo || '').trim()).filter(Boolean)
+    return (rows || []).map((r) => String(r?.modelo || '').trim().toLowerCase()).filter(Boolean)
   }
   const rows = await execute(
     `SELECT DISTINCT modelo
@@ -50,5 +50,5 @@ export async function obtenerModelosMoto(marca) {
      WHERE modelo IS NOT NULL AND modelo <> ''
      ORDER BY modelo`
   )
-  return (rows || []).map((r) => String(r?.modelo || '').trim()).filter(Boolean)
+  return (rows || []).map((r) => String(r?.modelo || '').trim().toLowerCase()).filter(Boolean)
 }

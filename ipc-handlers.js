@@ -11,6 +11,7 @@ import * as aprontesAlertConfig from './aprontes-alert-config.js'
 import * as horariosAprontes from './horarios-aprontes.js'
 import * as motos from './motos.js'
 import * as registros from './registros.js'
+import * as ventas from './ventas.js'
 export async function handleIpc(channel, args) {
   switch (channel) {
     case '__ping__':
@@ -77,6 +78,26 @@ export async function handleIpc(channel, args) {
     // Registros
     case 'registros:mensual':
       return registros.obtenerRegistroMensual(args[0]?.mes || args[0])
+
+    // Ventas
+    case 'ventas:motos:list':
+      return ventas.listarMotosVentas(args[0]?.estado || args[0])
+    case 'ventas:motos:create':
+      return ventas.crearMotoVenta(args[0] || {})
+    case 'ventas:motos:update':
+      return ventas.actualizarMotoVenta(args[0] || {})
+    case 'ventas:motos:delete':
+      return ventas.borrarMotoVenta(args[0] || {})
+    case 'ventas:creditos:list':
+      return ventas.listarCreditosVentas()
+    case 'ventas:creditos:create':
+      return ventas.crearCreditoVenta(args[0] || {})
+    case 'ventas:creditos:update':
+      return ventas.actualizarCreditoVenta(args[0] || {})
+    case 'ventas:creditos:delete':
+      return ventas.borrarCreditoVenta(args[0] || {})
+    case 'ventas:exportar-mes':
+      return ventas.exportarMesCompleto(args[0] || {})
 
     // Resumen diario
     case 'resumen-diario:config:get':
