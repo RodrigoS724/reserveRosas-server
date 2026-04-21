@@ -248,6 +248,12 @@ async function handleRest(req, res, url, parts) {
         ok(res, { ok: true })
         return true
       }
+      if (isNumericId(parts[2]) && parts[3] === 'estado') {
+        const body = await readJson(req)
+        await reservas.actualizarEstadoReserva({ id: Number(parts[2]), ...(body || {}) })
+        ok(res, { ok: true })
+        return true
+      }
       if (isNumericId(parts[2])) {
         const body = await readJson(req)
         await reservas.actualizarReserva({ id: Number(parts[2]), ...(body || {}) })

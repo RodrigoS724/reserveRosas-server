@@ -446,6 +446,49 @@ export async function actualizarReserva(idOrPayload, reserva) {
   })
 }
 
+export async function actualizarEstadoReserva(idOrPayload, estado) {
+  const payload = typeof idOrPayload === 'object' && idOrPayload !== null
+    ? idOrPayload
+    : { id: idOrPayload, estado }
+
+  const reservaId = Number(payload?.id || idOrPayload || 0)
+  const nuevoEstado = String(payload?.estado || estado || '').trim()
+
+  if (!reservaId) {
+    throw new Error('ID de reserva invalido')
+  }
+
+  if (!nuevoEstado) {
+    throw new Error('Estado requerido')
+  }
+
+  return withTransaction(async (conn) => {
+    const [rows] = await conn.execute(
+      'SELECT estado FROM reservas WHERE id = ?',
+      [reservaId]
+    )
+    const anterior = rows[0]
+    if (!anterior) return
+
+    await conn.execute(
+      'UPDATE reservas SET estado = ? WHERE id = ?',
+      [nuevoEstado, reservaId]
+    )
+
+    try {
+      await conn.execute(
+        `INSERT INTO historial_reservas
+         (reserva_id, campo, valor_anterior, valor_nuevo, fecha)
+         VALUES ( ?, 'estado', ?, ?, NOW())`,
+        [reservaId, anterior.estado || '', nuevoEstado]
+      )
+    } catch (error) {
+      // Keep estado changes resilient even if historial has schema drift.
+      console.warn('[Reservas] No se pudo registrar historial de estado:', error)
+    }
+  })
+}
+
 export async function obtenerReservasSemana(desde, hasta) {
   const desdeNormalizado = normalizeDate(desde)
   const hastaNormalizado = normalizeDate(hasta)
