@@ -344,22 +344,22 @@ export async function moverReserva(idOrPayload, nuevaFecha, nuevaHora) {
 }
 
 export async function actualizarReserva(idOrPayload, reserva) {
-  const payload = typeof idOrPayload === 'object' && idOrPayload !== null
+  const incomingPayload = typeof idOrPayload === 'object' && idOrPayload !== null
     ? idOrPayload
     : (reserva || {})
-  const actor = getActor(payload)
-  const reservaId = Number((typeof idOrPayload === 'object' ? idOrPayload?.id : idOrPayload) || payload?.id || 0)
+  const actor = getActor(incomingPayload)
+  const reservaId = Number((typeof idOrPayload === 'object' ? idOrPayload?.id : idOrPayload) || incomingPayload?.id || 0)
   if (!reservaId) {
     throw new Error('ID de reserva invalido')
   }
 
-  const matriculaNormalizada = normalizeMatricula(payload?.matricula || '').slice(0, 10)
+  const matriculaNormalizada = normalizeMatricula(incomingPayload?.matricula || '').slice(0, 10)
   if (matriculaNormalizada && !/^[A-Z0-9]{3,10}$/.test(matriculaNormalizada)) {
     throw new Error('Matricula invalida')
   }
 
-  const fechaNormalizada = normalizeDate(payload?.fecha)
-  const horaNormalizada = normalizeHora(payload?.hora)
+  const fechaNormalizada = normalizeDate(incomingPayload?.fecha)
+  const horaNormalizada = normalizeHora(incomingPayload?.hora)
 
   return withTransaction(async (conn) => {
     const [rows] = await conn.execute(
@@ -372,7 +372,7 @@ export async function actualizarReserva(idOrPayload, reserva) {
     const anterior = rows[0]
     if (!anterior) return
 
-    const merged = buildReservaMutationInput(anterior, payload, actor.role)
+    const merged = buildReservaMutationInput(anterior, incomingPayload, actor.role)
     const normalized = normalizeReservaInput({ ...merged })
     const matriculaNormalizada = normalizeMatricula(merged?.matricula || '').slice(0, 10)
     if (matriculaNormalizada && !/^[A-Z0-9]{3,10}$/.test(matriculaNormalizada)) {

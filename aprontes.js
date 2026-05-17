@@ -13,6 +13,7 @@ import {
 
 const ESTADOS_APRONTE = new Set([
   'APRONTE',
+  'LISTA PARA ENTREGAR',
   'ENTREGADA',
   'ENTREGADA ESPERA DE GARANTIA'
 ])
@@ -27,6 +28,7 @@ function normalizeEstadoApronte(value) {
     .replace(/\s+/g, ' ')
 
   if (!raw) return 'APRONTE'
+  if (raw === 'LISTO PARA ENTREGAR') return 'LISTA PARA ENTREGAR'
   if (raw === 'ENTREGADA ESPERA DE GARATIA') return 'ENTREGADA ESPERA DE GARANTIA'
   if (raw === 'ENTREGADA ESPERA GARANTIA') return 'ENTREGADA ESPERA DE GARANTIA'
   if (raw === 'ESPERA DE GARANTIA') return 'ENTREGADA ESPERA DE GARANTIA'
