@@ -152,21 +152,6 @@ function horaEnMinutos(hora) {
   return h * 60 + m
 }
 
-function obtenerHoyIsoLocal() {
-  const now = new Date()
-  const y = now.getFullYear()
-  const m = String(now.getMonth() + 1).padStart(2, '0')
-  const d = String(now.getDate()).padStart(2, '0')
-  return `${y}-${m}-${d}`
-}
-
-function validarNoPasado(fechaIso) {
-  const hoyIso = obtenerHoyIsoLocal()
-  if (String(fechaIso || '') < hoyIso) {
-    throw new Error('No se pueden seleccionar fechas de aprontes anteriores a hoy')
-  }
-}
-
 function validarReglaFinDeSemana(fechaIso, hora) {
   const day = new Date(`${fechaIso}T00:00:00`).getDay()
   if (day === 0) {
@@ -177,9 +162,19 @@ function validarReglaFinDeSemana(fechaIso, hora) {
   }
 }
 
-function validarFechaAgendaApronte(fechaIso, hora) {
-  // Misma logica de agenda: permitir hoy/futuro y bloquear pasado.
-  validarNoPasado(fechaIso)
+function validarNoPasadoSegunFechaHora(fechaIso, hora) {
+  const fechaHora = new Date(`${fechaIso}T${hora}:00`)
+  if (Number.isNaN(fechaHora.getTime())) {
+    throw new Error('Formato de fecha u hora invalido')
+  }
+  if (fechaHora.getTime() < Date.now()) {
+    throw new Error('No se pueden seleccionar fechas y horas de aprontes anteriores al momento actual')
+  }
+}
+
+function validarFechaAgendaApronteCreacion(fechaIso, hora) {
+  // Al crear, solo se permite ahora/futuro y se bloquea pasado.
+  validarNoPasadoSegunFechaHora(fechaIso, hora)
   // Se mantienen restricciones de agenda en fin de semana.
   validarReglaFinDeSemana(fechaIso, hora)
 }
@@ -219,7 +214,7 @@ export async function crearApronte(data) {
   const payload = normalizeAprontePayload(data)
   const fechaNormalizada = normalizeDate(payload.fecha)
   const horaNormalizada = normalizeHora(payload.hora)
-  validarFechaAgendaApronte(fechaNormalizada, horaNormalizada)
+  validarFechaAgendaApronteCreacion(fechaNormalizada, horaNormalizada)
   const creatorRole = normalizeRole(actor.role)
   const cajaAprobado = requiresCajaApproval(creatorRole) ? 0 : 1
   const cajaAprobadoPor = cajaAprobado ? (actor.username || null) : null
@@ -323,7 +318,6 @@ export async function actualizarApronte(id, data) {
     const payload = normalizeAprontePayload(merged)
     const fechaNormalizada = normalizeDate(payload.fecha)
     const horaNormalizada = normalizeHora(payload.hora)
-    validarFechaAgendaApronte(fechaNormalizada, horaNormalizada)
     const estadoAnterior = normalizeEstadoApronte(anterior.estado)
     const estadoNuevo = normalizeEstadoApronte(payload.estado)
     const entraEspera = estadoNuevo === 'ENTREGADA ESPERA DE GARANTIA' && estadoAnterior !== 'ENTREGADA ESPERA DE GARANTIA'
