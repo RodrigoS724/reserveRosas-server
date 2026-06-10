@@ -82,9 +82,6 @@ function validarReserva(data) {
     if (!garantiaTipo) {
       throw new Error('Tipo de garantia requerido')
     }
-    if (!data.garantia_fecha_compra) {
-      throw new Error('Fecha de compra requerida')
-    }
     if (garantiaTipo === 'Service') {
       if (!data.garantia_numero_service) {
         throw new Error('Numero de service requerido')
@@ -130,9 +127,6 @@ function validarCondicionesSubtipo(data) {
   if (tipo === 'Garantia') {
     const garantiaTipo = canonicalGarantiaTipo(data.garantia_tipo)
     if (garantiaTipo === 'Service') {
-      if (!String(data.garantia_fecha_compra || '').trim()) {
-        throw new Error('Fecha de compra requerida para Garantia Service')
-      }
       if (!kmNumerico) {
         throw new Error('KM requerido para Garantia Service')
       }
