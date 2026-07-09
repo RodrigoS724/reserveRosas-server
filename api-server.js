@@ -88,6 +88,48 @@ async function readJson(req) {
   }
 }
 
+function readHeaderString(req, name) {
+  const value = req.headers[name]
+  if (Array.isArray(value)) {
+    return String(value[0] || '').trim()
+  }
+  return String(value || '').trim()
+}
+
+function parseArgsFromHeader(rawValue) {
+  if (!rawValue) return null
+  try {
+    const decoded = Buffer.from(String(rawValue), 'base64').toString('utf-8')
+    const parsed = JSON.parse(decoded)
+    return Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function parseIpcEnvelope(req, url, body) {
+  const safeBody = body && typeof body === 'object' ? body : {}
+
+  const headerChannel = readHeaderString(req, 'x-rr-ipc-channel')
+  const queryChannel = String(url.searchParams.get('channel') || '').trim()
+  const channel = String(safeBody.channel || safeBody.event || safeBody.action || queryChannel || headerChannel || '').trim()
+
+  if (Array.isArray(safeBody.args)) {
+    return { channel, args: safeBody.args }
+  }
+
+  if (safeBody.payload !== undefined) {
+    return { channel, args: [safeBody.payload] }
+  }
+
+  const headerArgs = parseArgsFromHeader(readHeaderString(req, 'x-rr-ipc-args'))
+  if (headerArgs) {
+    return { channel, args: headerArgs }
+  }
+
+  return { channel, args: [] }
+}
+
 function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex')
 }
@@ -203,6 +245,12 @@ async function handleRest(req, res, url, parts) {
       if (isNumericId(parts[2]) && parts[3] === 'notas') {
         const body = await readJson(req)
         await reservas.actualizarNotasReserva({ id: Number(parts[2]), ...(body || {}) })
+        ok(res, { ok: true })
+        return true
+      }
+      if (isNumericId(parts[2]) && parts[3] === 'estado') {
+        const body = await readJson(req)
+        await reservas.actualizarEstadoReserva({ id: Number(parts[2]), ...(body || {}) })
         ok(res, { ok: true })
         return true
       }
@@ -604,8 +652,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     const body = await readJson(req)
-    const channel = String(body.channel || '')
-    const args = Array.isArray(body.args) ? body.args : []
+    const { channel, args } = parseIpcEnvelope(req, url, body)
+
+    if (!channel) {
+      fail(res, 400, 'Canal IPC requerido')
+      return
+    }
 
     try {
       const data = await handleIpc(channel, args)

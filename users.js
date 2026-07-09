@@ -249,21 +249,40 @@ export async function crearUsuario(data) {
 
 export async function actualizarUsuario(data) {
   await ensureUsersTable()
+  const userId = Number(data?.id)
+  if (!Number.isFinite(userId) || userId <= 0) {
+    throw new Error('ID de usuario invalido')
+  }
+
+  const nombre = String(data?.nombre || '').trim()
+  const username = normalizeUsername(data?.username)
+  if (!nombre) {
+    throw new Error('El nombre es obligatorio')
+  }
+  if (!username) {
+    throw new Error('El usuario es obligatorio')
+  }
+
   const role = normalizeRole(data.role)
   const permissions = normalizePermissions(role, data.permissions)
   const activo = data.activo ?? 1
 
-  await execute(
+  const result = await execute(
     `UPDATE usuarios SET nombre = ?, username = ?, role = ?, permissions_json = ?, activo = ?
      WHERE id = ?`,
-    [data.nombre, data.username, role, JSON.stringify(permissions), activo, data.id]
+    [nombre, username, role, JSON.stringify(permissions), activo, userId]
   )
+
+  const affectedRows = Number(result?.affectedRows ?? 0)
+  if (affectedRows === 0) {
+    throw new Error('Usuario no encontrado o sin cambios aplicables')
+  }
 
   await registrarAuditoria({
     actor_username: data.actor_username || 'sistema',
     actor_role: data.actor_role || 'system',
     accion: 'USUARIO_ACTUALIZADO',
-    target_username: data.username,
+    target_username: username,
     detalle: 'Rol: ' + role + ' | activo: ' + activo
   })
 }

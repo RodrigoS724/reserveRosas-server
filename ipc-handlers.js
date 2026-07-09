@@ -28,6 +28,8 @@ export async function handleIpc(channel, args) {
       return reservas.moverReserva(args[0] || {})
     case 'reservas:actualizar':
       return reservas.actualizarReserva(args[0] || {})
+    case 'reservas:estado':
+      return reservas.actualizarEstadoReserva(args[0] || {})
     case 'reservas:semana':
       return reservas.obtenerReservasSemana(args[0]?.desde, args[0]?.hasta)
     case 'reservas:dia':
