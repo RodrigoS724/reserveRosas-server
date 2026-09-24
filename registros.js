@@ -99,12 +99,19 @@ function summarizeAprontes(aprontes) {
 
 async function obtenerReservasMes(desde, hasta) {
   const tieneGarantiaFechaCompra = await hasColumn('reservas', 'garantia_fecha_compra')
-  const garantiaFechaCompraSql = tieneGarantiaFechaCompra ? 'garantia_fecha_compra,' : ''
+  const tieneGarantiaNumeroService = await hasColumn('reservas', 'garantia_numero_service')
+  const tieneGarantiaProblema = await hasColumn('reservas', 'garantia_problema')
+
+  const columnasGarantia = [
+    tieneGarantiaFechaCompra ? 'garantia_fecha_compra' : 'NULL AS garantia_fecha_compra',
+    tieneGarantiaNumeroService ? 'garantia_numero_service' : 'NULL AS garantia_numero_service',
+    tieneGarantiaProblema ? 'garantia_problema' : 'NULL AS garantia_problema'
+  ]
 
   return execute(
     `SELECT id, nombre, telefono, marca, modelo, km, matricula,
             tipo_turno, particular_tipo, garantia_tipo,
-            ${garantiaFechaCompraSql} garantia_numero_service, garantia_problema,
+            ${columnasGarantia.join(',\n            ')},
             fecha, hora, estado
      FROM reservas
      WHERE fecha >= ? AND fecha <= ?

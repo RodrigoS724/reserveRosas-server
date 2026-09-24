@@ -110,12 +110,6 @@ function pickClienteData(input = {}) {
   }
 }
 
-function pickClienteData(input = {}) {
-  return {
-    cliente_correo: normalizeText(input.cliente_correo ?? input.email ?? input.correo ?? '', 255) || null
-  }
-}
-
 function pickServicioPayload(input = {}) {
   return {
     numero_servicios: normalizeText(input.numero_servicios ?? input.numeroServicios ?? '', 255) || null,
