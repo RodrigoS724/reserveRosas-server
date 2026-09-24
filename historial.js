@@ -39,14 +39,21 @@ export async function obtenerHistorial(reservaId) {
     throw new Error('ID de reserva invalido')
   }
   const rows = await execute(
-    `SELECT id, reserva_id, campo, valor_anterior, valor_nuevo, fecha, usuario
-     FROM historial_reservas
+    `SELECT
+       id,
+       reserva_id,
+       tipo_evento AS campo,
+       titulo AS valor_anterior,
+       detalle AS valor_nuevo,
+       fecha_evento AS fecha,
+       NULL AS usuario
+     FROM vehiculo_eventos
      WHERE reserva_id = ?
-     ORDER BY fecha DESC, id DESC`,
+     ORDER BY fecha_evento DESC, id DESC`,
     [id]
   )
   return rows.map((row) => ({
     ...row,
-    descripcion: describirCambio(row.campo, row.valor_anterior, row.valor_nuevo)
+    descripcion: row.titulo || row.detalle || describirCambio(row.campo, row.valor_anterior, row.valor_nuevo)
   }))
 }

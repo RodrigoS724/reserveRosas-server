@@ -1,7 +1,40 @@
 import { execute, withTransaction } from './db.js'
 import { normalizeDate, normalizeHora, isSaturday } from './utils.js'
 
+let horariosSchemaReady = false
+
+async function ensureHorariosSchema() {
+  if (horariosSchemaReady) return
+
+  await execute(
+    `CREATE TABLE IF NOT EXISTS horarios_base (
+       id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+       hora VARCHAR(10) NOT NULL UNIQUE,
+       activo TINYINT NOT NULL DEFAULT 1
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+  )
+
+  await execute(
+    `CREATE TABLE IF NOT EXISTS bloqueos_horarios (
+       id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+       fecha DATE NOT NULL,
+       hora VARCHAR(10) NOT NULL,
+       motivo TEXT NULL,
+       INDEX idx_bloqueos_horarios_fecha_hora (fecha, hora)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+  )
+
+  await execute(
+    `INSERT IGNORE INTO horarios_base (hora, activo) VALUES
+     ('08:00', 1), ('09:00', 1), ('10:00', 1), ('11:00', 1),
+     ('13:00', 1), ('14:00', 1), ('15:00', 1), ('16:00', 1)`
+  )
+
+  horariosSchemaReady = true
+}
+
 export async function obtenerHorariosBase() {
+  await ensureHorariosSchema()
   const rows = await execute(
     `SELECT * FROM horarios_base
      WHERE activo = 1
@@ -11,6 +44,7 @@ export async function obtenerHorariosBase() {
 }
 
 export async function obtenerHorariosInactivos() {
+  await ensureHorariosSchema()
   const rows = await execute(
     'SELECT id, hora FROM horarios_base WHERE activo = 0 ORDER BY hora'
   )
@@ -18,6 +52,7 @@ export async function obtenerHorariosInactivos() {
 }
 
 export async function obtenerHorariosDisponibles(fecha) {
+  await ensureHorariosSchema()
   const fechaNormalizada = normalizeDate(fecha)
   const rows = await execute(
     `SELECT h.hora
@@ -44,6 +79,7 @@ export async function obtenerHorariosDisponibles(fecha) {
 }
 
 export async function crearHorario(hora) {
+  await ensureHorariosSchema()
   const horaNormalizada = normalizeHora(hora)
   await withTransaction(async (conn) => {
     const [rows] = await conn.execute('SELECT id FROM horarios_base WHERE hora = ?', [horaNormalizada])
@@ -58,14 +94,17 @@ export async function crearHorario(hora) {
 }
 
 export async function desactivarHorario(id) {
+  await ensureHorariosSchema()
   await execute('UPDATE horarios_base SET activo = 0 WHERE id = ?', [id])
 }
 
 export async function activarHorario(id) {
+  await ensureHorariosSchema()
   await execute('UPDATE horarios_base SET activo = 1 WHERE id = ?', [id])
 }
 
 export async function bloquearHorario(fecha, hora, motivo) {
+  await ensureHorariosSchema()
   const fechaNormalizada = normalizeDate(fecha)
   const horaNormalizada = normalizeHora(hora)
   await withTransaction(async (conn) => {
@@ -82,6 +121,7 @@ export async function bloquearHorario(fecha, hora, motivo) {
 }
 
 export async function desbloquearHorario(fecha, hora) {
+  await ensureHorariosSchema()
   const fechaNormalizada = normalizeDate(fecha)
   const horaNormalizada = normalizeHora(hora)
   await execute(
@@ -91,6 +131,7 @@ export async function desbloquearHorario(fecha, hora) {
 }
 
 export async function obtenerHorariosBloqueados(fecha) {
+  await ensureHorariosSchema()
   const fechaNormalizada = normalizeDate(fecha)
   const rows = await execute(
     'SELECT * FROM bloqueos_horarios WHERE fecha = ? ORDER BY hora',
@@ -100,6 +141,7 @@ export async function obtenerHorariosBloqueados(fecha) {
 }
 
 export async function borrarHorarioPermanente(id) {
+  await ensureHorariosSchema()
   await withTransaction(async (conn) => {
     const [rows] = await conn.execute('SELECT id FROM horarios_base WHERE id = ?', [id])
     if (!rows.length) {

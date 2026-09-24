@@ -12,6 +12,18 @@ import * as horariosAprontes from './horarios-aprontes.js'
 import * as motos from './motos.js'
 import * as registros from './registros.js'
 import * as ventas from './ventas.js'
+
+let ingresosModulePromise = null
+
+async function getIngresosModule() {
+  if (!ingresosModulePromise) {
+    ingresosModulePromise = import('./ingresos.js').catch((error) => {
+      console.warn('[IPC] Modulo ingresos no disponible:', error?.message || error)
+      return null
+    })
+  }
+  return ingresosModulePromise
+}
 export async function handleIpc(channel, args) {
   switch (channel) {
     case '__ping__':
@@ -101,6 +113,20 @@ export async function handleIpc(channel, args) {
     case 'ventas:exportar-mes':
       return ventas.exportarMesCompleto(args[0] || {})
 
+    // Ingresos / egresos
+    case 'ingresos:list':
+      return (await getIngresosModule())?.listarIngresos() ?? { ok: false, error: 'Modulo ingresos no disponible' }
+    case 'ingresos:por-cliente':
+      return (await getIngresosModule())?.obtenerIngresosPorCliente(args[0]) ?? []
+    case 'ingresos:obtener':
+      return (await getIngresosModule())?.obtenerIngreso(args[0]) ?? null
+    case 'ingresos:crear':
+      return (await getIngresosModule())?.crearIngreso(args[0] || {}) ?? { ok: false, error: 'Modulo ingresos no disponible' }
+    case 'ingresos:actualizar':
+      return (await getIngresosModule())?.actualizarIngreso(args[0] || {}) ?? { ok: false, error: 'Modulo ingresos no disponible' }
+    case 'ingresos:egreso':
+      return (await getIngresosModule())?.registrarEgreso(args[0] || {}) ?? { ok: false, error: 'Modulo ingresos no disponible' }
+
     // Resumen diario
     case 'resumen-diario:config:get':
       return dailySummary.getDailySummaryConfig()
@@ -135,6 +161,14 @@ export async function handleIpc(channel, args) {
     case 'historial:obtener':
       return historial.obtenerHistorial(args[0])
 
+    // Clientes
+    case 'clientes:listar':
+      return reservas.listarClientes(args[0])
+    case 'clientes:detalle':
+      return reservas.obtenerClienteDetalle(args[0])
+    case 'clientes:guardar':
+      return reservas.guardarCliente(args[0] || {})
+
     // Vehiculos
     case 'vehiculos:todos':
       return vehiculos.obtenerVehiculos()
@@ -142,6 +176,12 @@ export async function handleIpc(channel, args) {
       return vehiculos.obtenerHistorialVehiculo(args[0])
     case 'vehiculos:mysql-by-matricula':
       return vehiculos.obtenerVehiculoPorMatriculaMysql(args[0])
+    case 'vehiculos:por-cedula':
+      return vehiculos.obtenerVehiculosPorCedula(args[0])
+    case 'vehiculos:catalogo':
+      return vehiculos.obtenerCatalogoVehiculos()
+    case 'vehiculos:actualizar':
+      return vehiculos.actualizarVehiculoCliente(args[0] || {})
 
     // Motos catalogo
     case 'motos:marcas':

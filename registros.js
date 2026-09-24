@@ -1,6 +1,18 @@
 import { execute } from './db.js'
 import { normalizeText } from './utils.js'
 
+async function hasColumn(tableName, columnName) {
+  const rows = await execute(
+    `SELECT COUNT(*) AS total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+       AND COLUMN_NAME = ?`,
+    [tableName, columnName]
+  )
+  return Number(rows?.[0]?.total || 0) > 0
+}
+
 function parseMonth(value) {
   const today = new Date()
   let year = today.getUTCFullYear()
@@ -86,10 +98,13 @@ function summarizeAprontes(aprontes) {
 }
 
 async function obtenerReservasMes(desde, hasta) {
+  const tieneGarantiaFechaCompra = await hasColumn('reservas', 'garantia_fecha_compra')
+  const garantiaFechaCompraSql = tieneGarantiaFechaCompra ? 'garantia_fecha_compra,' : ''
+
   return execute(
     `SELECT id, nombre, telefono, marca, modelo, km, matricula,
             tipo_turno, particular_tipo, garantia_tipo,
-            garantia_fecha_compra, garantia_numero_service, garantia_problema,
+            ${garantiaFechaCompraSql} garantia_numero_service, garantia_problema,
             fecha, hora, estado
      FROM reservas
      WHERE fecha >= ? AND fecha <= ?
@@ -99,14 +114,46 @@ async function obtenerReservasMes(desde, hasta) {
 }
 
 async function obtenerAprontesMes(desde, hasta) {
-  return execute(
-    `SELECT id, nombre, telefono, localidad, observaciones,
-            marca, modelo, factura, estado, fecha, hora
-     FROM aprontes
-     WHERE fecha >= ? AND fecha <= ?
-     ORDER BY fecha, hora`,
-    [desde, hasta]
-  )
+  const tieneObservaciones = await hasColumn('aprontes', 'observaciones')
+  const tieneObservacion = !tieneObservaciones && await hasColumn('aprontes', 'observacion')
+  const observacionesSql = tieneObservaciones
+    ? 'observaciones'
+    : tieneObservacion
+      ? 'observacion AS observaciones'
+      : 'NULL AS observaciones'
+
+  try {
+    return await execute(
+      `SELECT id, nombre, telefono, localidad, ${observacionesSql},
+              marca, modelo, factura, estado, fecha, hora
+       FROM aprontes
+       WHERE fecha >= ? AND fecha <= ?
+       ORDER BY fecha, hora`,
+      [desde, hasta]
+    )
+  } catch (error) {
+    if (!tieneObservaciones) {
+      if (tieneObservacion) {
+        return execute(
+          `SELECT id, nombre, telefono, localidad, observacion AS observaciones,
+                  marca, modelo, factura, estado, fecha, hora
+           FROM aprontes
+           WHERE fecha >= ? AND fecha <= ?
+           ORDER BY fecha, hora`,
+          [desde, hasta]
+        )
+      }
+      return execute(
+        `SELECT id, nombre, telefono, localidad, NULL AS observaciones,
+                marca, modelo, factura, estado, fecha, hora
+         FROM aprontes
+         WHERE fecha >= ? AND fecha <= ?
+         ORDER BY fecha, hora`,
+        [desde, hasta]
+      )
+    }
+    throw error
+  }
 }
 
 export async function obtenerRegistroMensual(mes) {

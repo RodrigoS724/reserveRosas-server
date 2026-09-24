@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node server.cjs",
-    "dev": "node --watch api-server.js"
+    "dev": "node --watch api-server.js",
+    "import:legacy": "node scripts/import-legacy-dump.mjs"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

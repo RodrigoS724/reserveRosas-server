@@ -1,6 +1,33 @@
 import { execute, withTransaction } from './db.js'
 import { normalizeDate, normalizeHora } from './utils.js'
 
+let schemaReady = false
+const DEFAULT_HORAS = ['08:00', '09:00', '10:00', '11:00', '13:00', '14:00', '15:00', '16:00']
+
+async function ensureHorariosAprontesSchema() {
+  if (schemaReady) return
+  await execute(`CREATE TABLE IF NOT EXISTS horarios_aprontes (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    hora VARCHAR(10) NOT NULL UNIQUE,
+    cupo INT NOT NULL DEFAULT 1,
+    activo TINYINT NOT NULL DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`)
+  schemaReady = true
+}
+
+async function ensureHorariosAprontesSeed() {
+  await ensureHorariosAprontesSchema()
+  const rows = await execute('SELECT COUNT(*) AS total FROM horarios_aprontes')
+  if (Number(rows?.[0]?.total || 0) > 0) {
+    return
+  }
+
+  for (const hora of DEFAULT_HORAS) {
+    await execute('INSERT IGNORE INTO horarios_aprontes (hora, cupo, activo) VALUES (?, 1, 1)', [hora])
+  }
+}
+
 function normalizeCupo(value) {
   const cupo = Number(value)
   if (!Number.isFinite(cupo) || cupo < 1) {
@@ -41,6 +68,7 @@ function aplicarReglaFinDeSemana(fechaIso, rows) {
 }
 
 export async function obtenerHorariosAprontesBase() {
+  await ensureHorariosAprontesSeed()
   const rows = await execute(
     `SELECT id, hora, cupo, activo
      FROM horarios_aprontes
@@ -51,6 +79,7 @@ export async function obtenerHorariosAprontesBase() {
 }
 
 export async function obtenerHorariosAprontesInactivos() {
+  await ensureHorariosAprontesSeed()
   const rows = await execute(
     `SELECT id, hora, cupo
      FROM horarios_aprontes
@@ -61,6 +90,7 @@ export async function obtenerHorariosAprontesInactivos() {
 }
 
 export async function obtenerHorariosAprontesDisponibles(fecha) {
+  await ensureHorariosAprontesSeed()
   const fechaNormalizada = normalizeDate(fecha)
   if (esFechaPasada(fechaNormalizada)) {
     return []
@@ -84,6 +114,7 @@ export async function obtenerHorariosAprontesDisponibles(fecha) {
 }
 
 export async function crearHorarioApronte(hora, cupo = 1) {
+  await ensureHorariosAprontesSeed()
   const horaNormalizada = normalizeHora(hora)
   const cupoNormalizado = normalizeCupo(cupo)
   await withTransaction(async (conn) => {
@@ -102,6 +133,7 @@ export async function crearHorarioApronte(hora, cupo = 1) {
 }
 
 export async function actualizarCupoHorarioApronte(id, cupo) {
+  await ensureHorariosAprontesSeed()
   const cupoNormalizado = normalizeCupo(cupo)
   const idNum = Number(id)
   if (!idNum) {
@@ -123,14 +155,17 @@ export async function actualizarCupoHorarioApronte(id, cupo) {
 }
 
 export async function desactivarHorarioApronte(id) {
+  await ensureHorariosAprontesSeed()
   await execute('UPDATE horarios_aprontes SET activo = 0 WHERE id = ?', [id])
 }
 
 export async function activarHorarioApronte(id) {
+  await ensureHorariosAprontesSeed()
   await execute('UPDATE horarios_aprontes SET activo = 1 WHERE id = ?', [id])
 }
 
 export async function borrarHorarioApronte(id) {
+  await ensureHorariosAprontesSeed()
   await withTransaction(async (conn) => {
     const [rows] = await conn.execute(
       'SELECT id FROM horarios_aprontes WHERE id = ?',

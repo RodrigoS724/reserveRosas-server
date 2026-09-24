@@ -1,7 +1,8 @@
 import http from 'node:http'
+import fs from 'node:fs'
+import path from 'node:path'
 import { URL } from 'node:url'
 import crypto from 'node:crypto'
-import dotenv from 'dotenv'
 import { handleIpc } from './ipc-handlers.js'
 import * as reservas from './reservas.js'
 import * as horarios from './horarios.js'
@@ -19,16 +20,28 @@ import * as registros from './registros.js'
 import { SERVER_ENV_PATH } from './paths.js'
 import { isMysqlConfigured } from './db.js'
 
-dotenv.config({ path: SERVER_ENV_PATH })
+function loadEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return
+  const text = fs.readFileSync(filePath, 'utf-8')
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const index = trimmed.indexOf('=')
+    if (index === -1) continue
+    const key = trimmed.slice(0, index).trim()
+    let value = trimmed.slice(index + 1).trim()
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1)
+    }
+    if (key) {
+      process.env[key] = value
+    }
+  }
+}
+
+loadEnvFile(path.resolve(SERVER_ENV_PATH))
 
 const PORT = Number(process.env.API_PORT || 3005)
-const HEALTH_INFO = {
-  ok: true,
-  service: 'reserveRosas-server',
-  aprontesRules: 'allow-future-disallow-past',
-  //deployPaths: ['/home/rosasuy/dev-server/'] //dev
-  deployPaths: ['/home/rosasuy/reserva-server/'] //prod
-}
 
 if (isMysqlConfigured()) {
   startAprontesGarantiaAlertScheduler()
@@ -265,6 +278,35 @@ async function handleRest(req, res, url, parts) {
     if (method === 'DELETE' && isNumericId(parts[2])) {
       await reservas.borrarReserva({ id: Number(parts[2]) })
       ok(res, { ok: true })
+      return true
+    }
+  }
+
+  if (resource === 'clientes') {
+    if (method === 'GET') {
+      if (parts.length === 2) {
+        const q = url.searchParams.get('q') || url.searchParams.get('search') || ''
+        const data = await reservas.listarClientes(q)
+        ok(res, data)
+        return true
+      }
+      if (isNumericId(parts[2])) {
+        const data = await reservas.obtenerClienteDetalle(Number(parts[2]))
+        ok(res, data)
+        return true
+      }
+      if (parts[2] === 'detalle') {
+        const id = url.searchParams.get('id') || url.searchParams.get('cedula') || ''
+        const data = await reservas.obtenerClienteDetalle(id)
+        ok(res, data)
+        return true
+      }
+    }
+
+    if (method === 'POST' && parts[2] === 'guardar') {
+      const body = await readJson(req)
+      const data = await reservas.guardarCliente(body || {})
+      ok(res, data, 201)
       return true
     }
   }
@@ -618,6 +660,21 @@ async function handleRest(req, res, url, parts) {
   return false
 }
 
+async function buildHealthInfo() {
+  const dbProbe = await config.testDb()
+  return {
+    ok: true,
+    service: 'reserveRosas-server'
+    , aprontesRules: 'allow-future-disallow-past',
+    deployPaths: ['/home/rosasuy/reserva-server/'],
+    database: {
+      configured: isMysqlConfigured(),
+      connected: Boolean(dbProbe.ok),
+      error: dbProbe.ok ? '' : String(dbProbe.error || '')
+    }
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   applyCors(req, res)
 
@@ -641,7 +698,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && pathname === '/api/health') {
-    sendJson(res, 200, HEALTH_INFO)
+    const health = await buildHealthInfo()
+    sendJson(res, 200, health)
     return
   }
 
@@ -695,6 +753,10 @@ const server = http.createServer(async (req, res) => {
   }
 
   fail(res, 404, 'Endpoint no encontrado')
+})
+
+await users.bootstrapSuperAdmin().catch((error) => {
+  console.warn('[Usuarios] Bootstrap de superadmin falló:', error)
 })
 
 server.listen(PORT, () => {

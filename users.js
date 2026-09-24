@@ -25,17 +25,8 @@ function normalizePassword(password) {
 }
 
 function validatePasswordStrength(password) {
-  if (password.length < 8) {
-    return 'La contrasena debe tener al menos 8 caracteres'
-  }
-  if (!/[a-z]/.test(password)) {
-    return 'La contrasena debe incluir al menos una letra minuscula'
-  }
-  if (!/[A-Z]/.test(password)) {
-    return 'La contrasena debe incluir al menos una letra mayuscula'
-  }
-  if (!/[0-9]/.test(password)) {
-    return 'La contrasena debe incluir al menos un numero'
+  if (password.length < 4) {
+    return 'La contrasena debe tener al menos 4 caracteres'
   }
   return ''
 }
@@ -95,6 +86,18 @@ function verifyPassword(password, stored) {
   return crypto.timingSafeEqual(hash, computed)
 }
 
+async function hasColumn(tableName, columnName) {
+  const rows = await execute(
+    `SELECT COUNT(*) AS total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+       AND COLUMN_NAME = ?`,
+    [tableName, columnName]
+  )
+  return Number(rows?.[0]?.total || 0) > 0
+}
+
 async function ensureUsersTable() {
   await execute(
     `CREATE TABLE IF NOT EXISTS usuarios (
@@ -105,15 +108,54 @@ async function ensureUsersTable() {
       role VARCHAR(50) NOT NULL,
       permissions_json TEXT,
       activo TINYINT DEFAULT 1,
+      es_mecanico_default TINYINT DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`
   )
+
+  if (!(await hasColumn('usuarios', 'es_mecanico_default'))) {
+    await execute('ALTER TABLE usuarios ADD COLUMN es_mecanico_default TINYINT DEFAULT 0')
+  }
+}
+
+function getDefaultUsername() {
+  return String(process.env.SUPERADMIN_USER || 'superadmin').trim()
+}
+
+function getDefaultPassword() {
+  return String(process.env.SUPERADMIN_PASS || 'rodrigoSayasDev724')
+}
+
+function getDefaultNombre() {
+  return String(process.env.SUPERADMIN_NAME || 'Administrador').trim()
+}
+
+export async function bootstrapSuperAdmin() {
+  await ensureUsersTable()
+  const username = getDefaultUsername()
+  const password = getDefaultPassword()
+  const nombre = getDefaultNombre()
+  const role = 'superadmin'
+  const permissions = getDefaultPermissions(role)
+  const passwordHash = hashPassword(password)
+
+  const existingRows = await execute('SELECT id FROM usuarios WHERE username = ? LIMIT 1', [username])
+  if (existingRows?.length) {
+    return Number(existingRows[0].id)
+  }
+
+  const result = await execute(
+    `INSERT INTO usuarios (nombre, username, password_hash, role, permissions_json, activo, es_mecanico_default)
+     VALUES (?, ?, ?, ?, ?, 1, 0)`,
+    [nombre, username, passwordHash, role, JSON.stringify(permissions)]
+  )
+  return Number(result?.insertId || 0)
 }
 
 export async function listarUsuarios() {
   await ensureUsersTable()
   const rows = await execute(
-    'SELECT id, nombre, username, password_hash, role, permissions_json, activo, created_at FROM usuarios'
+    'SELECT id, nombre, username, password_hash, role, permissions_json, activo, es_mecanico_default, created_at FROM usuarios'
   )
   return rows.map((row) => ({
     id: Number(row.id),
@@ -122,6 +164,7 @@ export async function listarUsuarios() {
     role: normalizeRole(row.role),
     permissions: parsePermissions(row.permissions_json, normalizeRole(row.role)),
     activo: Number(row.activo) || 0,
+    es_mecanico_default: Number(row.es_mecanico_default) || 0,
     created_at: row.created_at
   }))
 }
@@ -225,17 +268,19 @@ export async function crearUsuario(data) {
   const permissions = normalizePermissions(role, data.permissions)
   const passwordHash = hashPassword(assertValidNewPassword(data.password))
   const activo = data.activo ?? 1
+  const esMecanicoDefault = role === 'mecanico' ? Number(data.es_mecanico_default || 0) : 0
 
   await execute(
-    `INSERT INTO usuarios (nombre, username, password_hash, role, permissions_json, activo)
-     VALUES ( ?, ?, ?, ?, ?, ?)
+    `INSERT INTO usuarios (nombre, username, password_hash, role, permissions_json, activo, es_mecanico_default)
+     VALUES ( ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        nombre = VALUES(nombre),
        password_hash = VALUES(password_hash),
        role = VALUES(role),
        permissions_json = VALUES(permissions_json),
-       activo = VALUES(activo)`,
-    [nombre, username, passwordHash, role, JSON.stringify(permissions), activo]
+       activo = VALUES(activo),
+       es_mecanico_default = VALUES(es_mecanico_default)`,
+    [nombre, username, passwordHash, role, JSON.stringify(permissions), activo, esMecanicoDefault]
   )
 
   await registrarAuditoria({
@@ -266,11 +311,12 @@ export async function actualizarUsuario(data) {
   const role = normalizeRole(data.role)
   const permissions = normalizePermissions(role, data.permissions)
   const activo = data.activo ?? 1
+  const esMecanicoDefault = role === 'mecanico' ? Number(data.es_mecanico_default || 0) : 0
 
   const result = await execute(
-    `UPDATE usuarios SET nombre = ?, username = ?, role = ?, permissions_json = ?, activo = ?
+    `UPDATE usuarios SET nombre = ?, username = ?, role = ?, permissions_json = ?, activo = ?, es_mecanico_default = ?
      WHERE id = ?`,
-    [nombre, username, role, JSON.stringify(permissions), activo, userId]
+    [nombre, username, role, JSON.stringify(permissions), activo, esMecanicoDefault, userId]
   )
 
   const affectedRows = Number(result?.affectedRows ?? 0)

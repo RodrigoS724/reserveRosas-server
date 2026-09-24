@@ -5,6 +5,8 @@ export const ALL_PERMISSIONS = [
   'reservas',
   'registros',
   'aprontes',
+  'clientes',
+  'mecanicos',
   'historial',
   'ajustes',
   'vehiculos',
@@ -15,9 +17,9 @@ export const ALL_PERMISSIONS = [
 
 const DEFAULT_PERMISSIONS = {
   superadmin: [...ALL_PERMISSIONS],
-  administrador: ['agenda', 'reservas', 'registros', 'aprontes', 'historial', 'ajustes', 'vehiculos', 'usuarios', 'auditoria'],
-  ventas: ['agenda', 'reservas', 'registros', 'aprontes', 'historial'],
-  caja: ['agenda', 'reservas', 'registros', 'aprontes', 'historial'],
+  administrador: ['agenda', 'reservas', 'registros', 'aprontes', 'clientes', 'mecanicos', 'historial', 'ajustes', 'vehiculos', 'usuarios', 'auditoria'],
+  ventas: ['agenda', 'reservas', 'registros', 'aprontes', 'clientes', 'mecanicos', 'historial'],
+  caja: ['agenda', 'reservas', 'registros', 'aprontes', 'clientes', 'mecanicos', 'historial'],
   taller: ['reservas', 'aprontes', 'historial']
 }
 

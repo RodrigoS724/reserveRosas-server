@@ -10,11 +10,11 @@ export async function registrarMarcaModelo(conn, marca, modelo) {
   const modeloOk = cleanText(modelo, 100)
   if (!marcaOk || !modeloOk) return
   const sql = `
-    INSERT INTO motos_catalogo (marca, modelo)
-    VALUES (?, ?)
-    ON DUPLICATE KEY UPDATE modelo = modelo
+    INSERT INTO vehiculo_cod (marca, modelo, tipo)
+    VALUES (?, ?, ?)
+    ON DUPLICATE KEY UPDATE modelo = VALUES(modelo)
   `
-  const params = [marcaOk, modeloOk]
+  const params = [marcaOk, modeloOk, 'moto']
   if (conn && typeof conn.execute === 'function') {
     await conn.execute(sql, params)
     return
@@ -25,8 +25,9 @@ export async function registrarMarcaModelo(conn, marca, modelo) {
 export async function obtenerMarcasMoto() {
   const rows = await execute(
     `SELECT DISTINCT marca
-     FROM motos_catalogo
+     FROM vehiculo_cod
      WHERE marca IS NOT NULL AND marca <> ''
+       AND tipo = 'moto'
      ORDER BY marca`
   )
   return (rows || []).map((r) => String(r?.marca || '').trim().toLowerCase()).filter(Boolean)
@@ -37,8 +38,9 @@ export async function obtenerModelosMoto(marca) {
   if (marcaOk) {
     const rows = await execute(
       `SELECT DISTINCT modelo
-       FROM motos_catalogo
+       FROM vehiculo_cod
        WHERE LOWER(marca) = ? AND modelo IS NOT NULL AND modelo <> ''
+         AND tipo = 'moto'
        ORDER BY modelo`,
       [marcaOk]
     )
@@ -46,8 +48,9 @@ export async function obtenerModelosMoto(marca) {
   }
   const rows = await execute(
     `SELECT DISTINCT modelo
-     FROM motos_catalogo
+     FROM vehiculo_cod
      WHERE modelo IS NOT NULL AND modelo <> ''
+       AND tipo = 'moto'
      ORDER BY modelo`
   )
   return (rows || []).map((r) => String(r?.modelo || '').trim().toLowerCase()).filter(Boolean)

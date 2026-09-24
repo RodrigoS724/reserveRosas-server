@@ -2,6 +2,13 @@ import { execute, withTransaction } from './db.js'
 import { registrarMarcaModelo } from './motos.js'
 import { normalizeDate, normalizeHora } from './utils.js'
 import {
+  obtenerEstadoId,
+  obtenerVehiculoCodigoId,
+  registrarVehiculoEvento,
+  upsertCliente,
+  upsertVehiculoCliente
+} from './db-structure.js'
+import {
   assertCanCreateApronte,
   assertCanDeleteApronte,
   canApproveApronte,
@@ -19,6 +26,99 @@ const ESTADOS_APRONTE = new Set([
 ])
 
 let schemaReady = false
+
+async function hasColumn(tableName, columnName) {
+  const rows = await execute(
+    `SELECT COUNT(*) AS total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+       AND COLUMN_NAME = ?`,
+    [tableName, columnName]
+  )
+  return Number(rows?.[0]?.total || 0) > 0
+}
+
+async function ensureColumn(tableName, columnName, definition) {
+  if (await hasColumn(tableName, columnName)) return
+  await execute(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`)
+}
+
+function cleanText(value, maxLen = 255) {
+  const text = String(value || '').trim()
+  return text.length > maxLen ? text.slice(0, maxLen) : text
+}
+
+function cleanOptionalDate(value) {
+  const text = String(value || '').trim()
+  return text || null
+}
+
+function normalizeEstado(value) {
+  const raw = String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+
+  if (!raw) return 'APRONTE'
+  if (raw === 'LISTO PARA ENTREGAR') return 'LISTA PARA ENTREGAR'
+  if (raw === 'ENTREGADA ESPERA DE GARATIA') return 'ENTREGADA ESPERA DE GARANTIA'
+  if (raw === 'ENTREGADA ESPERA GARANTIA') return 'ENTREGADA ESPERA DE GARANTIA'
+  if (raw === 'ESPERA DE GARANTIA') return 'ENTREGADA ESPERA DE GARANTIA'
+  return raw
+}
+
+function readSection(input, sectionName) {
+  const section = input?.[sectionName]
+  return section && typeof section === 'object' ? section : {}
+}
+
+class Cliente {
+  constructor(data = {}) {
+    const cliente = readSection(data, 'cliente')
+    this.nombre = cleanText(cliente.nombre ?? data.nombre ?? '', 255)
+    this.telefono = cleanText(cliente.telefono ?? data.telefono ?? '', 30)
+    this.localidad = cleanText(cliente.localidad ?? data.localidad ?? '', 100)
+  }
+}
+
+class Vehiculo {
+  constructor(data = {}) {
+    const vehiculo = readSection(data, 'vehiculo')
+    this.matricula = cleanText(vehiculo.matricula ?? data.matricula ?? '', 50)
+    this.marca = cleanText(vehiculo.marca ?? data.marca ?? '', 100)
+    this.modelo = cleanText(vehiculo.modelo ?? data.modelo ?? '', 100)
+    this.numeroMotor = cleanText(vehiculo.numero_motor ?? vehiculo.numeroMotor ?? data.numero_motor ?? '', 100)
+  }
+}
+
+class Apronte {
+  constructor(data = {}) {
+    const apronte = readSection(data, 'apronte')
+    this.nombre = cleanText(apronte.nombre ?? data.nombre ?? '', 255)
+    this.telefono = cleanText(apronte.telefono ?? data.telefono ?? '', 30)
+    this.localidad = cleanText(apronte.localidad ?? data.localidad ?? '', 100)
+    this.observaciones = cleanText(apronte.observaciones ?? apronte.observacion ?? data.observaciones ?? data.observacion ?? '', 500)
+    this.marca = cleanText(apronte.marca ?? data.marca ?? '', 100)
+    this.modelo = cleanText(apronte.modelo ?? data.modelo ?? '', 100)
+    this.numeroMotor = cleanText(apronte.numero_motor ?? apronte.numeroMotor ?? data.numero_motor ?? '', 100)
+    this.factura = cleanText(apronte.factura ?? data.factura ?? '', 100)
+    this.estado = normalizeEstado(apronte.estado ?? data.estado)
+    this.repuestosGarantia = cleanText(apronte.repuestos_garantia ?? data.repuestos_garantia ?? '', 1000)
+    this.correoAlertaGarantia = cleanText(apronte.correo_alerta_garantia ?? data.correo_alerta_garantia ?? '', 255)
+    this.diasAlertaGarantia = Number(apronte.dias_alerta_garantia ?? data.dias_alerta_garantia ?? 7) || 7
+    this.fechaAlertaGarantia = cleanOptionalDate(apronte.fecha_alerta_garantia ?? data.fecha_alerta_garantia)
+  }
+}
+
+function buildApronteDomain(data = {}) {
+  return {
+    cliente: new Cliente(data),
+    vehiculo: new Vehiculo(data),
+    apronte: new Apronte(data)
+  }
+}
 
 function normalizeEstadoApronte(value) {
   const raw = String(value || '')
@@ -57,6 +157,10 @@ function normalizeOptionalDate(value) {
   return normalizeDate(raw)
 }
 
+function buildApronteDomainPayload(data) {
+  return buildApronteDomain(data)
+}
+
 function buildApronteMutationInput(anterior, incoming, actorRole) {
   if (isTallerRole(actorRole)) {
     return {
@@ -74,20 +178,90 @@ async function ensureAprontesSchema() {
   if (schemaReady) return
 
   const statements = [
-    `ALTER TABLE aprontes ADD COLUMN estado VARCHAR(60) DEFAULT 'APRONTE'`,
-    `ALTER TABLE aprontes ADD COLUMN repuestos_garantia TEXT`,
-    `ALTER TABLE aprontes ADD COLUMN correo_alerta_garantia VARCHAR(255)`,
-    `ALTER TABLE aprontes ADD COLUMN dias_alerta_garantia INT DEFAULT 7`,
-    `ALTER TABLE aprontes ADD COLUMN fecha_alerta_garantia DATE NULL`,
-    `ALTER TABLE aprontes ADD COLUMN numero_motor VARCHAR(100)`,
-    `ALTER TABLE aprontes ADD COLUMN garantia_espera_desde DATETIME NULL`,
-    `ALTER TABLE aprontes ADD COLUMN garantia_notificada TINYINT DEFAULT 0`,
-    `ALTER TABLE aprontes ADD COLUMN garantia_notificada_at DATETIME NULL`,
-    `ALTER TABLE aprontes ADD COLUMN created_by_username VARCHAR(255) NULL`,
-    `ALTER TABLE aprontes ADD COLUMN created_by_role VARCHAR(50) NULL`,
-    `ALTER TABLE aprontes ADD COLUMN caja_aprobado TINYINT DEFAULT 1`,
-    `ALTER TABLE aprontes ADD COLUMN caja_aprobado_at DATETIME NULL`,
-    `ALTER TABLE aprontes ADD COLUMN caja_aprobado_por VARCHAR(255) NULL`
+    `CREATE TABLE IF NOT EXISTS clientes (
+      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      cedula VARCHAR(20) NOT NULL UNIQUE,
+      nombre VARCHAR(255) NOT NULL,
+      telefono VARCHAR(30) NULL,
+      localidad VARCHAR(100) NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS dt_estado_apronte (
+      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      codigo VARCHAR(40) NOT NULL UNIQUE,
+      nombre VARCHAR(100) NOT NULL,
+      orden INT NOT NULL DEFAULT 0,
+      activo TINYINT NOT NULL DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS horarios_aprontes (
+      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      hora VARCHAR(10) NOT NULL UNIQUE,
+      cupo INT NOT NULL DEFAULT 1,
+      activo TINYINT NOT NULL DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `INSERT IGNORE INTO dt_estado_apronte (codigo, nombre, orden) VALUES
+      ('pendiente', 'Pendiente', 1),
+      ('en_revision', 'En revision', 2),
+      ('pronto', 'Pronto', 3),
+      ('cancelado', 'Cancelado', 4)` ,
+    `CREATE TABLE IF NOT EXISTS vehiculo_cod (
+      cod BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      marca VARCHAR(100) NOT NULL,
+      modelo VARCHAR(100) NOT NULL,
+      tipo ENUM('moto', 'bicicleta', 'otro') NOT NULL DEFAULT 'moto',
+      activo TINYINT NOT NULL DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_vehiculo_cod (marca, modelo, tipo)
+    )`,
+    `CREATE TABLE IF NOT EXISTS vehiculos_cliente (
+      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      cliente_id BIGINT UNSIGNED NOT NULL,
+      cod_vehiculo BIGINT UNSIGNED NULL,
+      motor VARCHAR(100) NULL,
+      chasis VARCHAR(100) NULL,
+      matricula VARCHAR(20) NULL,
+      color VARCHAR(50) NULL,
+      fecha_compra DATE NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_vehiculo_matricula (matricula)
+    )`,
+    `CREATE TABLE IF NOT EXISTS aprontes (
+      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      cliente_id BIGINT UNSIGNED NOT NULL,
+      vehiculo_id BIGINT UNSIGNED NULL,
+      mecanico_id BIGINT UNSIGNED NULL,
+      nombre VARCHAR(255) NULL,
+      fecha DATE NOT NULL,
+      hora VARCHAR(10) NOT NULL,
+      telefono VARCHAR(30) NULL,
+      localidad VARCHAR(100) NULL,
+      observaciones TEXT NULL,
+      marca VARCHAR(100) NULL,
+      modelo VARCHAR(100) NULL,
+      numero_motor VARCHAR(100) NULL,
+      factura VARCHAR(100) NULL,
+      estado VARCHAR(60) NOT NULL DEFAULT 'APRONTE',
+      repuestos_garantia TEXT NULL,
+      correo_alerta_garantia VARCHAR(255) NULL,
+      dias_alerta_garantia INT NOT NULL DEFAULT 7,
+      fecha_alerta_garantia DATE NULL,
+      garantia_espera_desde DATETIME NULL,
+      garantia_notificada TINYINT NOT NULL DEFAULT 0,
+      garantia_notificada_at DATETIME NULL,
+      created_by_username VARCHAR(255) NULL,
+      created_by_role VARCHAR(50) NULL,
+      caja_aprobado TINYINT NOT NULL DEFAULT 1,
+      caja_aprobado_at DATETIME NULL,
+      caja_aprobado_por VARCHAR(255) NULL,
+      estado_id BIGINT UNSIGNED NOT NULL,
+      ingreso_id BIGINT UNSIGNED NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`
   ]
 
   for (const sql of statements) {
@@ -102,11 +276,6 @@ async function ensureAprontesSchema() {
   }
 
   schemaReady = true
-}
-
-function cleanText(value, maxLen = 255) {
-  const text = String(value || '').trim()
-  return text.length > maxLen ? text.slice(0, maxLen) : text
 }
 
 function validateRequired(data) {
@@ -184,6 +353,9 @@ async function validarCupoDisponible(conn, fecha, hora, excludeId = null) {
     'SELECT cupo FROM horarios_aprontes WHERE hora = ? AND activo = 1',
     [hora]
   )
+
+  await ensureColumn('aprontes', 'observaciones', 'TEXT NULL')
+  await ensureColumn('aprontes', 'observacion', 'TEXT NULL')
   if (!horRows.length) {
     throw new Error('Horario de apronte no disponible')
   }
@@ -218,21 +390,52 @@ export async function crearApronte(data) {
   const creatorRole = normalizeRole(actor.role)
   const cajaAprobado = requiresCajaApproval(creatorRole) ? 0 : 1
   const cajaAprobadoPor = cajaAprobado ? (actor.username || null) : null
+  const { cliente, vehiculo, apronte } = buildApronteDomainPayload(payload)
 
   return withTransaction(async (conn) => {
     await validarCupoDisponible(conn, fechaNormalizada, horaNormalizada)
 
+    const clienteId = await upsertCliente(conn, {
+      cedula: data.cedula,
+      nombre: cliente.nombre,
+      telefono: cliente.telefono,
+      localidad: cliente.localidad
+    })
+
+    let vehiculoId = Number(data.vehiculo_id || 0)
+    if (!vehiculoId) {
+      const codVehiculoId = await obtenerVehiculoCodigoId(conn, {
+        marca: vehiculo.marca,
+        modelo: vehiculo.modelo,
+        tipo: 'moto'
+      })
+      vehiculoId = await upsertVehiculoCliente(conn, {
+        clienteId,
+        codVehiculo: codVehiculoId,
+        motor: vehiculo.numeroMotor || '',
+        matricula: vehiculo.matricula || '',
+        color: data.color || '',
+        fechaCompra: data.fecha_compra || null
+      })
+    }
+
+    const estadoId = await obtenerEstadoId(conn, 'dt_estado_apronte', 'pendiente')
+
     const [result] = await conn.execute(
       `INSERT INTO aprontes (
-        nombre, fecha, hora,
-        telefono, localidad, observaciones,
+        cliente_id, vehiculo_id, mecanico_id, nombre, fecha, hora,
+        telefono, localidad, observacion,
         marca, modelo, numero_motor, factura,
         estado, repuestos_garantia,
         correo_alerta_garantia, dias_alerta_garantia, fecha_alerta_garantia,
         garantia_espera_desde, garantia_notificada, garantia_notificada_at,
-        created_by_username, created_by_role, caja_aprobado, caja_aprobado_at, caja_aprobado_por
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+        created_by_username, created_by_role, caja_aprobado, caja_aprobado_at, caja_aprobado_por,
+        estado_id, ingreso_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)` ,
       [
+        clienteId,
+        vehiculoId,
+        data?.mecanico_id ?? null,
         payload.nombre,
         fechaNormalizada,
         horaNormalizada,
@@ -248,16 +451,30 @@ export async function crearApronte(data) {
         payload.correo_alerta_garantia,
         payload.dias_alerta_garantia,
         payload.fecha_alerta_garantia,
-        payload.estado === 'ENTREGADA ESPERA DE GARANTIA' ? new Date() : null,
+        apronte.estado === 'ENTREGADA ESPERA DE GARANTIA' ? new Date() : null,
         0,
         null,
         actor.username || null,
         creatorRole,
         cajaAprobado,
         cajaAprobado ? new Date() : null,
-        cajaAprobadoPor
+        cajaAprobadoPor,
+        estadoId
       ]
     )
+
+    await registrarVehiculoEvento(conn, {
+      clienteId,
+      vehiculoId,
+      apronteId: Number(result.insertId),
+      tipoEvento: 'apronte',
+      fechaEvento: new Date(),
+      titulo: 'Apronte creado',
+      detalle: payload.observaciones,
+      numero_motor: payload.numero_motor,
+      factura: payload.factura,
+      color: data.color || ''
+    })
 
     try {
       await registrarMarcaModelo(conn, payload.marca, payload.modelo)
@@ -265,7 +482,7 @@ export async function crearApronte(data) {
       console.warn('[Aprontes] No se pudo registrar marca/modelo:', error)
     }
 
-    return Number(result.insertId)
+    return { apronteId: Number(result.insertId), clienteId, vehiculoId }
   })
 }
 
