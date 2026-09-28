@@ -235,6 +235,7 @@ export async function obtenerClienteDetalle(input) {
        vc.tipo AS dt_vehiculo_tipo
      FROM vehiculos_cliente v
      LEFT JOIN vehiculo_cod vc ON vc.cod = v.cod_vehiculo
+     WHERE v.cliente_id = ?
      ORDER BY v.matricula ASC, v.id ASC`,
     [cliente.id]
   )

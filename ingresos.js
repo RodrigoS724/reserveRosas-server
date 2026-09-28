@@ -21,6 +21,18 @@ async function ensureColumn(tableName, columnName, definition) {
   await execute(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`)
 }
 
+async function resolveReserva(input = {}) {
+  const reservaId = Number(input.reserva_id ?? input.reservaId ?? 0)
+  if (!Number.isInteger(reservaId) || reservaId <= 0) return null
+
+  const rows = await execute('SELECT * FROM reservas WHERE id = ? LIMIT 1', [reservaId])
+  return rows[0] ?? null
+}
+
+async function getReservaDetalleColumn() {
+  return hasColumn('reservas', 'detalle') ? 'detalle' : 'detalles'
+}
+
 async function ensureIngresosSchema() {
   if (schemaReady) return
 
@@ -29,45 +41,15 @@ async function ensureIngresosSchema() {
       id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
       cliente_id BIGINT UNSIGNED NOT NULL,
       reserva_id BIGINT UNSIGNED NULL,
-      vehiculo_id BIGINT UNSIGNED NULL,
-      vehiculo_marca VARCHAR(255) NULL,
-      vehiculo_modelo VARCHAR(255) NULL,
-      vehiculo_color VARCHAR(255) NULL,
-      vehiculo_matricula VARCHAR(255) NULL,
-      vehiculo_motor VARCHAR(255) NULL,
-      cliente_correo VARCHAR(255) NULL,
-      fecha_actual DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      fecha_salida DATETIME NULL,
+      fecha_ingreso DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       fecha_egreso DATETIME NULL,
-      monto DECIMAL(12,2) NOT NULL DEFAULT 0,
-      trabajo_realizado TEXT NULL,
-      numero_servicios VARCHAR(255) NULL,
-      comentarios TEXT NULL,
-      observaciones TEXT NULL,
-      checklist_ingreso_json LONGTEXT NULL,
-      checklist_egreso_json LONGTEXT NULL,
-      trabajos_json LONGTEXT NULL,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      historia VARCHAR(255) NULL,
       INDEX idx_ingresos_cliente (cliente_id),
       INDEX idx_ingresos_reserva (reserva_id)
     )
   `)
 
-  await ensureColumn('ingresos', 'vehiculo_id', 'BIGINT UNSIGNED NULL')
-  await ensureColumn('ingresos', 'vehiculo_marca', 'VARCHAR(255) NULL')
-  await ensureColumn('ingresos', 'vehiculo_modelo', 'VARCHAR(255) NULL')
-  await ensureColumn('ingresos', 'vehiculo_color', 'VARCHAR(255) NULL')
-  await ensureColumn('ingresos', 'vehiculo_matricula', 'VARCHAR(255) NULL')
-  await ensureColumn('ingresos', 'vehiculo_motor', 'VARCHAR(255) NULL')
-  await ensureColumn('ingresos', 'cliente_correo', 'VARCHAR(255) NULL')
-  await ensureColumn('ingresos', 'fecha_salida', 'DATETIME NULL')
-  await ensureColumn('ingresos', 'numero_servicios', 'VARCHAR(255) NULL')
-  await ensureColumn('ingresos', 'comentarios', 'TEXT NULL')
-  await ensureColumn('ingresos', 'observaciones', 'TEXT NULL')
-  await ensureColumn('ingresos', 'checklist_ingreso_json', 'LONGTEXT NULL')
-  await ensureColumn('ingresos', 'checklist_egreso_json', 'LONGTEXT NULL')
-  await ensureColumn('ingresos', 'trabajos_json', 'LONGTEXT NULL')
+  await ensureColumn('ingresos', 'historia', 'VARCHAR(255) NULL AFTER fecha_egreso')
 
   schemaReady = true
 }
@@ -93,20 +75,20 @@ function normalizeJson(value, fallback = '{}') {
   }
 }
 
-function pickVehiculoData(input = {}) {
+function pickVehiculoData(input = {}, reserva = null) {
   return {
-    vehiculo_id: Number(input.vehiculo_id ?? input.vehiculoId ?? 0) || null,
-    vehiculo_marca: normalizeText(input.vehiculo_marca ?? input.marca ?? '', 255) || null,
-    vehiculo_modelo: normalizeText(input.vehiculo_modelo ?? input.modelo ?? '', 255) || null,
-    vehiculo_color: normalizeText(input.vehiculo_color ?? input.color ?? '', 255) || null,
-    vehiculo_matricula: normalizeText(input.vehiculo_matricula ?? input.matricula ?? '', 255) || null,
-    vehiculo_motor: normalizeText(input.vehiculo_motor ?? input.numero_motor ?? input.motor ?? '', 255) || null
+    vehiculo_id: Number(input.vehiculo_id ?? input.vehiculoId ?? reserva?.vehiculo_id ?? 0) || null,
+    vehiculo_marca: normalizeText(input.vehiculo_marca ?? input.marca ?? reserva?.marca ?? '', 255) || null,
+    vehiculo_modelo: normalizeText(input.vehiculo_modelo ?? input.modelo ?? reserva?.modelo ?? '', 255) || null,
+    vehiculo_color: normalizeText(input.vehiculo_color ?? input.color ?? reserva?.color ?? '', 255) || null,
+    vehiculo_matricula: normalizeText(input.vehiculo_matricula ?? input.matricula ?? reserva?.matricula ?? '', 255) || null,
+    vehiculo_motor: normalizeText(input.vehiculo_motor ?? input.numero_motor ?? input.motor ?? reserva?.numero_motor ?? '', 255) || null
   }
 }
 
-function pickClienteData(input = {}) {
+function pickClienteData(input = {}, reserva = null) {
   return {
-    cliente_correo: normalizeText(input.cliente_correo ?? input.email ?? input.correo ?? '', 255) || null
+    cliente_correo: normalizeText(input.cliente_correo ?? input.email ?? input.correo ?? reserva?.cliente_correo ?? '', 255) || null
   }
 }
 
@@ -121,10 +103,29 @@ function pickServicioPayload(input = {}) {
   }
 }
 
-async function resolveCliente(input) {
+function buildHistoria(input = {}, reserva = null, cliente = null) {
+  const piezas = [
+    input.historia,
+    reserva ? `Reserva ${reserva.id}${reserva.fecha ? ` ${reserva.fecha}` : ''}${reserva.hora ? ` ${reserva.hora}` : ''}` : null,
+    cliente ? `${cliente.nombre || ''} ${cliente.cedula || ''}`.trim() : null,
+    input.marca || input.modelo || input.matricula ? `${input.marca || ''} ${input.modelo || ''} ${input.matricula || ''}`.trim() : null,
+    input.comentarios,
+    input.observaciones
+  ]
+    .map((value) => normalizeText(value || '', 255))
+    .filter(Boolean)
+
+  return piezas.join(' | ').slice(0, 255) || null
+}
+
+async function resolveCliente(input, reserva = null) {
   const clienteId = Number(input?.cliente_id ?? input?.clienteId ?? 0)
   if (Number.isInteger(clienteId) && clienteId > 0) {
     const rows = await execute('SELECT * FROM clientes WHERE id = ? LIMIT 1', [clienteId])
+    return rows[0] ?? null
+  }
+  if (Number.isInteger(Number(reserva?.cliente_id || 0)) && Number(reserva?.cliente_id || 0) > 0) {
+    const rows = await execute('SELECT * FROM clientes WHERE id = ? LIMIT 1', [Number(reserva.cliente_id)])
     return rows[0] ?? null
   }
   return obtenerClientePorIdOCedula(execute, input?.cedula ?? input?.cliente ?? input?.clienteId ?? input)
@@ -132,35 +133,50 @@ async function resolveCliente(input) {
 
 export async function listarIngresos() {
   await ensureIngresosSchema()
+  const reservaDetalleColumn = await getReservaDetalleColumn()
   return execute(
-    `SELECT i.*, c.cedula AS cliente_cedula, c.nombre AS cliente_nombre, c.telefono AS cliente_telefono
+    `SELECT i.id, i.cliente_id, i.reserva_id, i.fecha_ingreso, i.fecha_egreso, i.historia,
+            i.fecha_ingreso AS fecha_actual,
+            c.cedula AS cliente_cedula, c.nombre AS cliente_nombre, c.telefono AS cliente_telefono,
+            r.fecha AS reserva_fecha, r.hora AS reserva_hora, r.${reservaDetalleColumn} AS reserva_detalles, r.estado AS reserva_estado
      FROM ingresos i
      INNER JOIN clientes c ON c.id = i.cliente_id
-     ORDER BY i.fecha_actual DESC, i.id DESC`
+     LEFT JOIN reservas r ON r.id = i.reserva_id
+     ORDER BY i.fecha_ingreso DESC, i.id DESC`
   )
 }
 
 export async function obtenerIngresosPorCliente(input) {
   await ensureIngresosSchema()
+  const reservaDetalleColumn = await getReservaDetalleColumn()
   const cliente = await resolveCliente(input)
   if (!cliente?.id) return []
 
   return execute(
-    `SELECT i.*, c.cedula AS cliente_cedula, c.nombre AS cliente_nombre, c.telefono AS cliente_telefono
+    `SELECT i.id, i.cliente_id, i.reserva_id, i.fecha_ingreso, i.fecha_egreso, i.historia,
+            i.fecha_ingreso AS fecha_actual,
+            c.cedula AS cliente_cedula, c.nombre AS cliente_nombre, c.telefono AS cliente_telefono,
+            r.fecha AS reserva_fecha, r.hora AS reserva_hora, r.${reservaDetalleColumn} AS reserva_detalles, r.estado AS reserva_estado
      FROM ingresos i
      INNER JOIN clientes c ON c.id = i.cliente_id
+     LEFT JOIN reservas r ON r.id = i.reserva_id
      WHERE i.cliente_id = ?
-     ORDER BY i.fecha_actual DESC, i.id DESC`,
+     ORDER BY i.fecha_ingreso DESC, i.id DESC`,
     [cliente.id]
   )
 }
 
 export async function obtenerIngreso(id) {
   await ensureIngresosSchema()
+  const reservaDetalleColumn = await getReservaDetalleColumn()
   const rows = await execute(
-    `SELECT i.*, c.cedula AS cliente_cedula, c.nombre AS cliente_nombre, c.telefono AS cliente_telefono
+      `SELECT i.id, i.cliente_id, i.reserva_id, i.fecha_ingreso, i.fecha_egreso, i.historia,
+        i.fecha_ingreso AS fecha_actual,
+        c.cedula AS cliente_cedula, c.nombre AS cliente_nombre, c.telefono AS cliente_telefono,
+            r.fecha AS reserva_fecha, r.hora AS reserva_hora, r.${reservaDetalleColumn} AS reserva_detalles, r.estado AS reserva_estado
      FROM ingresos i
      INNER JOIN clientes c ON c.id = i.cliente_id
+     LEFT JOIN reservas r ON r.id = i.reserva_id
      WHERE i.id = ?
      LIMIT 1`,
     [Number(id)]
@@ -175,50 +191,40 @@ export async function crearIngreso(input = {}) {
     throw new Error('El taller no puede registrar ingresos')
   }
 
-  const cliente = await resolveCliente(input)
+  const reserva = await resolveReserva(input)
+  if (reserva?.ingreso_id) {
+    return obtenerIngreso(reserva.ingreso_id)
+  }
+
+  const cliente = await resolveCliente(input, reserva)
   if (!cliente?.id) {
     throw new Error('Cliente requerido')
   }
 
-  const reservaId = Number(input.reserva_id ?? input.reservaId ?? 0)
-  const monto = normalizeMonto(input.monto)
-  const trabajoRealizado = normalizeText(input.trabajo_realizado ?? input.trabajoRealizado ?? '', 4000) || null
-  const vehiculo = pickVehiculoData(input)
-  const clienteDatos = pickClienteData(input)
-  const servicio = pickServicioPayload(input)
-  const fechaSalida = input.fecha_salida || input.fechaSalida || null
+  const reservaId = Number(input.reserva_id ?? input.reservaId ?? reserva?.id ?? 0)
+  const fechaIngreso = input.fecha_ingreso || input.fechaIngreso || input.fecha_actual || input.fechaActual || new Date()
+  const historia = buildHistoria(input, reserva, cliente)
 
   const result = await withTransaction(async (conn) => {
     const [insertResult] = await conn.execute(
       `INSERT INTO ingresos (
-        cliente_id, reserva_id, vehiculo_id, vehiculo_marca, vehiculo_modelo, vehiculo_color, vehiculo_matricula, vehiculo_motor, cliente_correo,
-        fecha_actual, fecha_salida, fecha_egreso, monto, trabajo_realizado, numero_servicios, comentarios, observaciones,
-        checklist_ingreso_json, checklist_egreso_json, trabajos_json
+        cliente_id, reserva_id, fecha_ingreso, fecha_egreso, historia
        )
-       VALUES (?, NULLIF(?, 0), ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), NOW()), ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+       VALUES (?, NULLIF(?, 0), COALESCE(NULLIF(?, ''), NOW()), NULL, ?)` ,
       [
         cliente.id,
         reservaId,
-        vehiculo.vehiculo_id,
-        vehiculo.vehiculo_marca,
-        vehiculo.vehiculo_modelo,
-        vehiculo.vehiculo_color,
-        vehiculo.vehiculo_matricula,
-        vehiculo.vehiculo_motor,
-        clienteDatos.cliente_correo,
-        input.fecha_actual || input.fechaActual || null,
-        fechaSalida,
-        monto,
-        trabajoRealizado,
-        servicio.numero_servicios,
-        servicio.comentarios,
-        servicio.observaciones,
-        servicio.checklist_ingreso_json,
-        servicio.checklist_egreso_json,
-        servicio.trabajos_json
+        fechaIngreso,
+        historia
       ]
     )
-    return Number(insertResult.insertId)
+
+    const ingresoId = Number(insertResult.insertId)
+    if (reservaId) {
+      await conn.execute('UPDATE reservas SET ingreso_id = ? WHERE id = ? AND (ingreso_id IS NULL OR ingreso_id = 0)', [ingresoId, reservaId])
+    }
+
+    return ingresoId
   })
 
   return obtenerIngreso(result)
@@ -236,67 +242,39 @@ export async function actualizarIngreso(input = {}) {
     throw new Error('Ingreso requerido')
   }
 
-  const cliente = await resolveCliente(input)
+  const reserva = await resolveReserva(input)
+  const cliente = await resolveCliente(input, reserva)
   if (!cliente?.id) {
     throw new Error('Cliente requerido')
   }
 
-  const reservaId = Number(input.reserva_id ?? input.reservaId ?? 0)
-  const monto = normalizeMonto(input.monto)
-  const trabajoRealizado = normalizeText(input.trabajo_realizado ?? input.trabajoRealizado ?? '', 4000) || null
-  const vehiculo = pickVehiculoData(input)
-  const clienteDatos = pickClienteData(input)
-  const servicio = pickServicioPayload(input)
-  const fechaSalida = input.fecha_salida || input.fechaSalida || null
+  const reservaId = Number(input.reserva_id ?? input.reservaId ?? reserva?.id ?? 0)
+  const fechaIngreso = input.fecha_ingreso || input.fechaIngreso || input.fecha_actual || input.fechaActual || null
+  const fechaEgreso = input.fecha_egreso || input.fechaEgreso || null
+  const historia = buildHistoria(input, reserva, cliente)
 
   await withTransaction(async (conn) => {
     await conn.execute(
       `UPDATE ingresos
        SET cliente_id = ?,
            reserva_id = NULLIF(?, 0),
-           vehiculo_id = ?,
-           vehiculo_marca = ?,
-           vehiculo_modelo = ?,
-           vehiculo_color = ?,
-           vehiculo_matricula = ?,
-           vehiculo_motor = ?,
-           cliente_correo = ?,
-           fecha_actual = COALESCE(NULLIF(?, ''), fecha_actual),
-           fecha_salida = COALESCE(NULLIF(?, ''), fecha_salida),
+           fecha_ingreso = COALESCE(NULLIF(?, ''), fecha_ingreso),
            fecha_egreso = COALESCE(NULLIF(?, ''), fecha_egreso),
-           monto = ?,
-           trabajo_realizado = ?,
-           numero_servicios = ?,
-           comentarios = ?,
-           observaciones = ?,
-           checklist_ingreso_json = ?,
-           checklist_egreso_json = ?,
-           trabajos_json = ?
+           historia = COALESCE(NULLIF(?, ''), historia)
        WHERE id = ?`,
       [
         cliente.id,
         reservaId,
-        vehiculo.vehiculo_id,
-        vehiculo.vehiculo_marca,
-        vehiculo.vehiculo_modelo,
-        vehiculo.vehiculo_color,
-        vehiculo.vehiculo_matricula,
-        vehiculo.vehiculo_motor,
-        clienteDatos.cliente_correo,
-        input.fecha_actual || input.fechaActual || null,
-        fechaSalida,
-        input.fecha_egreso || input.fechaEgreso || null,
-        monto,
-        trabajoRealizado,
-        servicio.numero_servicios,
-        servicio.comentarios,
-        servicio.observaciones,
-        servicio.checklist_ingreso_json,
-        servicio.checklist_egreso_json,
-        servicio.trabajos_json,
+        fechaIngreso,
+        fechaEgreso,
+        historia,
         ingresoId
       ]
     )
+
+    if (reservaId) {
+      await conn.execute('UPDATE reservas SET ingreso_id = ? WHERE id = ? AND (ingreso_id IS NULL OR ingreso_id = 0)', [ingresoId, reservaId])
+    }
   })
 
   return obtenerIngreso(ingresoId)
@@ -309,31 +287,20 @@ export async function registrarEgreso(input = {}) {
     throw new Error('El taller no puede registrar egresos')
   }
 
-  const ingresoId = Number(input.id ?? input.ingreso_id ?? input.ingresoId ?? 0)
+  const reserva = await resolveReserva(input)
+  const ingresoId = Number(input.id ?? input.ingreso_id ?? input.ingresoId ?? reserva?.ingreso_id ?? 0)
   if (!ingresoId) {
     throw new Error('Ingreso requerido')
   }
 
   const fechaEgreso = input.fecha_egreso || input.fechaEgreso || new Date()
-  const monto = input.monto == null ? null : normalizeMonto(input.monto)
-  const trabajoRealizado = input.trabajo_realizado == null && input.trabajoRealizado == null
-    ? null
-    : normalizeText(input.trabajo_realizado ?? input.trabajoRealizado ?? '', 4000)
-  const clienteDatos = pickClienteData(input)
-  const servicio = pickServicioPayload(input)
 
   await withTransaction(async (conn) => {
     await conn.execute(
       `UPDATE ingresos
-       SET fecha_egreso = COALESCE(?, fecha_egreso),
-           monto = COALESCE(?, monto),
-           trabajo_realizado = COALESCE(?, trabajo_realizado),
-           cliente_correo = COALESCE(?, cliente_correo),
-           checklist_egreso_json = COALESCE(NULLIF(?, ''), checklist_egreso_json),
-           trabajos_json = COALESCE(NULLIF(?, ''), trabajos_json),
-           observaciones = COALESCE(NULLIF(?, ''), observaciones)
+       SET fecha_egreso = COALESCE(?, fecha_egreso)
        WHERE id = ?`,
-        [fechaEgreso, monto, trabajoRealizado, clienteDatos.cliente_correo, servicio.checklist_egreso_json, servicio.trabajos_json, servicio.observaciones, ingresoId]
+        [fechaEgreso, ingresoId]
     )
   })
 
