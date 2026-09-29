@@ -11,11 +11,9 @@ import {
 import {
   assertCanCreateApronte,
   assertCanDeleteApronte,
-  canApproveApronte,
   getActor,
   isTallerRole,
   normalizeRole,
-  requiresCajaApproval
 } from './access-control.js'
 
 const ESTADOS_APRONTE = new Set([
@@ -254,15 +252,15 @@ async function ensureAprontesSchema() {
       garantia_notificada_at DATETIME NULL,
       created_by_username VARCHAR(255) NULL,
       created_by_role VARCHAR(50) NULL,
-      caja_aprobado TINYINT NOT NULL DEFAULT 1,
-      caja_aprobado_at DATETIME NULL,
-      caja_aprobado_por VARCHAR(255) NULL,
       estado_id BIGINT UNSIGNED NOT NULL,
       ingreso_id BIGINT UNSIGNED NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )`
   ]
+
+  await ensureColumn('aprontes', 'estado_id', 'BIGINT UNSIGNED NULL AFTER created_by_role')
+  await ensureColumn('aprontes', 'ingreso_id', 'BIGINT UNSIGNED NULL AFTER estado_id')
 
   for (const sql of statements) {
     try {
@@ -388,8 +386,6 @@ export async function crearApronte(data) {
   const horaNormalizada = normalizeHora(payload.hora)
   validarFechaAgendaApronteCreacion(fechaNormalizada, horaNormalizada)
   const creatorRole = normalizeRole(actor.role)
-  const cajaAprobado = requiresCajaApproval(creatorRole) ? 0 : 1
-  const cajaAprobadoPor = cajaAprobado ? (actor.username || null) : null
   const { cliente, vehiculo, apronte } = buildApronteDomainPayload(payload)
 
   return withTransaction(async (conn) => {
@@ -424,14 +420,14 @@ export async function crearApronte(data) {
     const [result] = await conn.execute(
       `INSERT INTO aprontes (
         cliente_id, vehiculo_id, mecanico_id, nombre, fecha, hora,
-        telefono, localidad, observacion,
+        telefono, localidad, observaciones,
         marca, modelo, numero_motor, factura,
         estado, repuestos_garantia,
         correo_alerta_garantia, dias_alerta_garantia, fecha_alerta_garantia,
         garantia_espera_desde, garantia_notificada, garantia_notificada_at,
-        created_by_username, created_by_role, caja_aprobado, caja_aprobado_at, caja_aprobado_por,
-        estado_id, ingreso_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)` ,
+        created_by_username, created_by_role,
+        estado_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
       [
         clienteId,
         vehiculoId,
@@ -456,9 +452,6 @@ export async function crearApronte(data) {
         null,
         actor.username || null,
         creatorRole,
-        cajaAprobado,
-        cajaAprobado ? new Date() : null,
-        cajaAprobadoPor,
         estadoId
       ]
     )
@@ -539,10 +532,6 @@ export async function actualizarApronte(id, data) {
     const estadoNuevo = normalizeEstadoApronte(payload.estado)
     const entraEspera = estadoNuevo === 'ENTREGADA ESPERA DE GARANTIA' && estadoAnterior !== 'ENTREGADA ESPERA DE GARANTIA'
     const saleEspera = estadoNuevo !== 'ENTREGADA ESPERA DE GARANTIA'
-    const nextCajaAprobado = canApproveApronte(actor.role) && Object.prototype.hasOwnProperty.call(data || {}, 'caja_aprobado')
-      ? (data?.caja_aprobado ? 1 : 0)
-      : Number(anterior.caja_aprobado ?? 1)
-    const cajaApprovalChanged = nextCajaAprobado !== Number(anterior.caja_aprobado ?? 1)
 
     const mismoHorario = fechaNormalizada === anterior.fecha && horaNormalizada === anterior.hora
     if (!mismoHorario) {
@@ -569,17 +558,6 @@ export async function actualizarApronte(id, data) {
            garantia_notificada_at = CASE
              WHEN ? OR ? THEN NULL
              ELSE garantia_notificada_at
-           END,
-           caja_aprobado = ?,
-           caja_aprobado_at = CASE
-             WHEN ? THEN NOW()
-             WHEN ? THEN NULL
-             ELSE caja_aprobado_at
-           END,
-           caja_aprobado_por = CASE
-             WHEN ? THEN ?
-             WHEN ? THEN NULL
-             ELSE caja_aprobado_por
            END
        WHERE id = ?`,
       [
@@ -602,14 +580,6 @@ export async function actualizarApronte(id, data) {
         saleEspera,
         entraEspera,
         saleEspera,
-        entraEspera,
-        saleEspera,
-        nextCajaAprobado,
-        cajaApprovalChanged && nextCajaAprobado === 1,
-        cajaApprovalChanged && nextCajaAprobado === 0,
-        cajaApprovalChanged && nextCajaAprobado === 1,
-        actor.username || null,
-        cajaApprovalChanged && nextCajaAprobado === 0,
         apronteId
       ]
     )

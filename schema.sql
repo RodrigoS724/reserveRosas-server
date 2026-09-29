@@ -158,9 +158,8 @@ CREATE TABLE IF NOT EXISTS aprontes (
   garantia_notificada_at DATETIME NULL,
   created_by_username VARCHAR(255) NULL,
   created_by_role VARCHAR(50) NULL,
-  caja_aprobado TINYINT DEFAULT 1,
-  caja_aprobado_at DATETIME NULL,
-  caja_aprobado_por VARCHAR(255) NULL,
+  estado_id BIGINT UNSIGNED NULL,
+  ingreso_id BIGINT UNSIGNED NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   INDEX (fecha, hora)
 );
