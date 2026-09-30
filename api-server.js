@@ -144,7 +144,7 @@ function parseIpcEnvelope(req, url, body) {
 }
 
 function hashToken(token) {
-  return crypto.createHash('sha256').update(token).digest('hex')
+  return crypto.createHash('sha256').update(String(token || '')).digest('hex')
 }
 
 function getProvidedToken(req, url) {

@@ -34,6 +34,7 @@ function canonicalTipoTurno(value) {
   const v = normalizeText(value)
   if (v === 'garantia') return 'Garantia'
   if (v === 'particular') return 'Particular'
+  if (v.includes('toma')) return 'Toma de moto'
   return String(value || '').trim()
 }
 
@@ -55,6 +56,7 @@ function codigoTipoTurno(value) {
   const raw = normalizeText(value).toLowerCase()
   if (raw.includes('garant')) return 'garantia'
   if (raw.includes('particular')) return 'particular'
+  if (raw.includes('toma')) return 'toma'
   return 'toma'
 }
 
@@ -82,28 +84,56 @@ async function hasColumn(tableName, columnName) {
   return Number(rows?.[0]?.total || 0) > 0
 }
 
+let reservasGuaranteeColumnsPromise = null
+let reservasDetailColumnPromise = null
+
+async function getReservasGuaranteeColumns() {
+  if (!reservasGuaranteeColumnsPromise) {
+    reservasGuaranteeColumnsPromise = Promise.all([
+      hasColumn('reservas', 'garantia_fecha_compra'),
+      hasColumn('reservas', 'garantia_numero_service'),
+      hasColumn('reservas', 'garantia_problema')
+    ]).then(([fechaCompra, numeroService, problema]) => ({
+      fechaCompra,
+      numeroService,
+      problema
+    }))
+  }
+  return reservasGuaranteeColumnsPromise
+}
+
+async function getReservasDetailColumn() {
+  if (!reservasDetailColumnPromise) {
+    reservasDetailColumnPromise = hasColumn('reservas', 'detalle')
+      .then((hasDetalle) => (hasDetalle ? 'detalle' : 'detalles'))
+  }
+  return reservasDetailColumnPromise
+}
+
 async function upsertClienteMysql(conn, data) {
   const cedula = normalizeCedula(data.cedula)
-  if (!cedula) return null
-  const [rows] = await conn.execute('SELECT id FROM clientes WHERE cedula = ? LIMIT 1', [cedula])
-  const id = rows[0]?.id
-  if (id) {
-    await conn.execute('UPDATE clientes SET nombre = ?, telefono = ? WHERE id = ?', [data.nombre, data.telefono, id])
-    return Number(id)
+  if (cedula) {
+    const [rows] = await conn.execute('SELECT id FROM clientes WHERE cedula = ? LIMIT 1', [cedula])
+    const id = rows[0]?.id
+    if (id) {
+      await conn.execute('UPDATE clientes SET nombre = ?, telefono = ? WHERE id = ?', [data.nombre, data.telefono, id])
+      return Number(id)
+    }
   }
-  const [result] = await conn.execute('INSERT INTO clientes (cedula, nombre, telefono) VALUES (?, ?, ?)', [cedula, data.nombre, data.telefono])
+  const [result] = await conn.execute('INSERT INTO clientes (cedula, nombre, telefono) VALUES (?, ?, ?)', [cedula || null, data.nombre, data.telefono])
   return Number(result.insertId)
 }
 
 function upsertClienteSqlite(db, data) {
   const cedula = normalizeCedula(data.cedula)
-  if (!cedula) return null
-  const existente = db.prepare('SELECT id FROM clientes WHERE cedula = ? LIMIT 1').get(cedula)
-  if (existente?.id) {
-    db.prepare('UPDATE clientes SET nombre = ?, telefono = ? WHERE id = ?').run(data.nombre, data.telefono, existente.id)
-    return Number(existente.id)
+  if (cedula) {
+    const existente = db.prepare('SELECT id FROM clientes WHERE cedula = ? LIMIT 1').get(cedula)
+    if (existente?.id) {
+      db.prepare('UPDATE clientes SET nombre = ?, telefono = ? WHERE id = ?').run(data.nombre, data.telefono, existente.id)
+      return Number(existente.id)
+    }
   }
-  const result = db.prepare('INSERT INTO clientes (cedula, nombre, telefono) VALUES (?, ?, ?)').run(cedula, data.nombre, data.telefono)
+  const result = db.prepare('INSERT INTO clientes (cedula, nombre, telefono) VALUES (?, ?, ?)').run(cedula || null, data.nombre, data.telefono)
   return Number(result.lastInsertRowid)
 }
 
@@ -205,7 +235,9 @@ export async function obtenerClienteDetalle(input) {
   const cedula = normalizeCedula(input)
   let cliente = null
   const reservasByClienteId = await hasColumn('reservas', 'cliente_id')
-  const reservasDetalleColumn = await hasColumn('reservas', 'detalle') ? 'detalle' : 'detalles'
+  const reservasDetalleColumn = await getReservasDetailColumn()
+  const reservasGuaranteeColumns = await getReservasGuaranteeColumns()
+  const garantiaFechaCompraSql = reservasGuaranteeColumns.fechaCompra ? 'garantia_fecha_compra' : 'NULL AS garantia_fecha_compra'
 
   if (Number.isInteger(clienteId) && clienteId > 0) {
     const rows = await execute('SELECT * FROM clientes WHERE id = ? LIMIT 1', [clienteId])
@@ -249,6 +281,7 @@ export async function obtenerClienteDetalle(input) {
        tipo_turno,
        particular_tipo,
        garantia_tipo,
+       ${garantiaFechaCompraSql},
        marca,
        modelo,
        matricula,
@@ -320,7 +353,7 @@ function normalizeReservaInput(data) {
 
   const normalized = {
     ...data,
-    tipo_turno: tipoTurno,
+    tipo_turno: tipoTurno || 'Toma de moto',
     particular_tipo: particularTipo || null,
     garantia_tipo: garantiaTipo || null
   }
@@ -410,7 +443,11 @@ function validarCondicionesSubtipo(data) {
 }
 
 function validateRequired(data) {
-  const required = ['nombre', 'telefono', 'marca', 'modelo', 'matricula', 'tipo_turno', 'fecha', 'hora']
+  const tipoTurno = canonicalTipoTurno(data.tipo_turno)
+  const required = ['nombre', 'telefono', 'fecha', 'hora']
+  if (tipoTurno !== 'Toma de moto') {
+    required.push('cedula')
+  }
   for (const key of required) {
     if (!String(data[key] || '').trim()) {
       throw new Error('Campo requerido: ' + key)
@@ -434,17 +471,21 @@ export async function crearReserva(data) {
   }
 
   return withTransaction(async (conn) => {
+    const detailColumn = await getReservasDetailColumn()
+    const reservasGuaranteeColumns = await getReservasGuaranteeColumns()
     const clienteId = await upsertClienteMysql(conn, {
       cedula: normalized.cedula,
       nombre: normalized.nombre,
       telefono: normalized.telefono
     })
 
-    const tipoTurnoId = await obtenerTipoTurnoId(conn, codigoTipoTurno(normalized.tipo_turno))
+    const tipoTurnoCodigo = codigoTipoTurno(normalized.tipo_turno)
+    const tipoTurnoId = await obtenerTipoTurnoId(conn, tipoTurnoCodigo)
     const estadoId = await obtenerEstadoId(conn, 'dt_estado_reserva', codigoEstadoReserva('pendiente'))
 
     let vehiculoId = Number(normalized.vehiculo_id || 0)
-    if (!vehiculoId) {
+    const tieneDatosVehiculo = Boolean(String(normalized.marca || '').trim() || String(normalized.modelo || '').trim())
+    if (!vehiculoId && tipoTurnoCodigo !== 'toma' && tieneDatosVehiculo) {
       vehiculoId = await upsertVehiculoMysql(conn, {
         clienteId,
         matricula: matriculaNormalizada,
@@ -459,40 +500,59 @@ export async function crearReserva(data) {
       })
     }
 
-    const [result] = await conn.execute(
-      `INSERT INTO reservas (
-        cliente_id, vehiculo_id, mecanico_id,
-        nombre, cedula, telefono, marca, modelo, matricula, km,
-        tipo_turno_id, tipo_turno, particular_tipo, garantia_tipo,
-        fecha_compra, nro_servicio, problema,
-        fecha, hora, detalle, estado_id, estado, ingreso_id
-      )
-      VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL )`,
-      [
-        clienteId,
-        vehiculoId || null,
-        data?.mecanico_id ?? null,
-        normalized.nombre,
-        normalized.cedula || '',
-        normalized.telefono,
-        normalized.marca,
-        normalized.modelo,
-        matriculaNormalizada,
-        normalized.km || '',
-        tipoTurnoId,
-        normalized.tipo_turno,
-        normalized.particular_tipo ?? null,
-        normalized.garantia_tipo ?? null,
-        normalized.garantia_fecha_compra ?? null,
-        normalized.garantia_numero_service ?? null,
-        normalized.garantia_problema ?? null,
-        fechaNormalizada,
-        horaNormalizada,
-        normalized.detalles ?? ''
-        ,estadoId,
-        codigoEstadoReserva('pendiente')
-      ]
-    )
+    const insertReserva = (() => {
+        const columns = [
+          'cliente_id', 'vehiculo_id', 'mecanico_id',
+          'nombre', 'cedula', 'telefono', 'marca', 'modelo', 'matricula', 'km',
+          'tipo_turno_id', 'tipo_turno', 'particular_tipo', 'garantia_tipo'
+        ]
+        const values = [
+          clienteId,
+          vehiculoId || null,
+          data?.mecanico_id ?? null,
+          normalized.nombre,
+          normalized.cedula || '',
+          normalized.telefono,
+          normalized.marca,
+          normalized.modelo,
+          matriculaNormalizada,
+          normalized.km || '',
+          tipoTurnoId,
+          normalized.tipo_turno,
+          normalized.particular_tipo ?? null,
+          normalized.garantia_tipo ?? null
+        ]
+
+        if (reservasGuaranteeColumns.fechaCompra) {
+          columns.push('garantia_fecha_compra')
+          values.push(normalized.garantia_fecha_compra ?? null)
+        }
+        if (reservasGuaranteeColumns.numeroService) {
+          columns.push('garantia_numero_service')
+          values.push(normalized.garantia_numero_service ?? null)
+        }
+        if (reservasGuaranteeColumns.problema) {
+          columns.push('garantia_problema')
+          values.push(normalized.garantia_problema ?? null)
+        }
+
+        columns.push('fecha', 'hora', detailColumn, 'estado_id', 'estado', 'ingreso_id')
+        values.push(
+          fechaNormalizada,
+          horaNormalizada,
+          normalized.detalles ?? '',
+          estadoId,
+          codigoEstadoReserva('pendiente'),
+          null
+        )
+
+        const placeholders = columns.map(() => '?').join(', ')
+        return {
+          sql: `INSERT INTO reservas (${columns.join(', ')}) VALUES (${placeholders})`,
+          values
+        }
+      })()
+    const [result] = await conn.execute(insertReserva.sql, insertReserva.values)
 
     const reservaId = Number(result.insertId)
 
@@ -554,8 +614,9 @@ export async function moverReserva(idOrPayload, nuevaFecha, nuevaHora) {
   assertCanMoveReserva(actor.role)
   const reservaId = Number(payload?.id || idOrPayload)
   return withTransaction(async (conn) => {
+    const detailColumn = await getReservasDetailColumn()
     const [rows] = await conn.execute(
-      'SELECT fecha, hora, cliente_id, vehiculo_id, detalle FROM reservas WHERE id = ?',
+      `SELECT fecha, hora, cliente_id, vehiculo_id, ${detailColumn} AS detalle FROM reservas WHERE id = ?`,
       [reservaId]
     )
     const anterior = rows[0]
@@ -596,10 +657,15 @@ export async function actualizarReserva(idOrPayload, reserva) {
   const horaNormalizada = normalizeHora(incomingPayload?.hora)
 
   return withTransaction(async (conn) => {
+    const detailColumn = await getReservasDetailColumn()
+    const reservasGuaranteeColumns = await getReservasGuaranteeColumns()
+    const selectGarantiaFechaCompra = reservasGuaranteeColumns.fechaCompra ? 'garantia_fecha_compra' : 'NULL AS garantia_fecha_compra'
+    const selectGarantiaNumeroService = reservasGuaranteeColumns.numeroService ? 'garantia_numero_service' : 'NULL AS garantia_numero_service'
+    const selectGarantiaProblema = reservasGuaranteeColumns.problema ? 'garantia_problema' : 'NULL AS garantia_problema'
     const [rows] = await conn.execute(
       `SELECT nombre, cedula, telefono, marca, modelo, km, matricula,
-              tipo_turno, particular_tipo, garantia_tipo, garantia_fecha_compra,
-              garantia_numero_service, garantia_problema, fecha, hora, estado, detalles, cliente_id, vehiculo_id
+              tipo_turno, particular_tipo, garantia_tipo, ${selectGarantiaFechaCompra},
+              ${selectGarantiaNumeroService}, ${selectGarantiaProblema}, fecha, hora, estado, ${detailColumn} AS detalles, cliente_id, vehiculo_id
        FROM reservas WHERE id = ?`,
       [reservaId]
     )
@@ -632,32 +698,53 @@ export async function actualizarReserva(idOrPayload, reserva) {
       detalles: normalized.detalles ?? ''
     }
 
+    const updateColumns = [
+      'nombre = ?',
+      'cedula = ?',
+      'telefono = ?',
+      'marca = ?',
+      'modelo = ?',
+      'km = ?',
+      'matricula = ?',
+      'tipo_turno = ?',
+      'particular_tipo = ?',
+      'garantia_tipo = ?'
+    ]
+    const updateValues = [
+      payload.nombre,
+      payload.cedula,
+      payload.telefono,
+      payload.marca,
+      payload.modelo,
+      payload.km,
+      payload.matricula,
+      payload.tipo_turno,
+      payload.particular_tipo ?? null,
+      payload.garantia_tipo ?? null
+    ]
+
+    if (reservasGuaranteeColumns.fechaCompra) {
+      updateColumns.push('garantia_fecha_compra = ?')
+      updateValues.push(payload.garantia_fecha_compra ?? null)
+    }
+    if (reservasGuaranteeColumns.numeroService) {
+      updateColumns.push('garantia_numero_service = ?')
+      updateValues.push(payload.garantia_numero_service ?? null)
+    }
+    if (reservasGuaranteeColumns.problema) {
+      updateColumns.push('garantia_problema = ?')
+      updateValues.push(payload.garantia_problema ?? null)
+    }
+
+    updateColumns.push('fecha = ?', 'hora = ?', 'estado = ?', `${detailColumn} = ?`)
+    updateValues.push(payload.fecha, payload.hora, payload.estado, payload.detalles)
+    updateValues.push(reservaId)
+
     await conn.execute(
       `UPDATE reservas
-       SET nombre = ?, cedula = ?, telefono = ?, marca = ?, modelo = ?, km = ?, matricula = ?,
-           tipo_turno = ?, particular_tipo = ?, garantia_tipo = ?, garantia_fecha_compra = ?,
-           garantia_numero_service = ?, garantia_problema = ?, fecha = ?, hora = ?, estado = ?, detalles = ?
+       SET ${updateColumns.join(', ')}
        WHERE id = ?`,
-      [
-        payload.nombre,
-        payload.cedula,
-        payload.telefono,
-        payload.marca,
-        payload.modelo,
-        payload.km,
-        payload.matricula,
-        payload.tipo_turno,
-        payload.particular_tipo ?? null,
-        payload.garantia_tipo ?? null,
-        payload.garantia_fecha_compra ?? null,
-        payload.garantia_numero_service ?? null,
-        payload.garantia_problema ?? null,
-        payload.fecha,
-        payload.hora,
-        payload.estado,
-        payload.detalles,
-        reservaId
-      ]
+      updateValues
     )
 
     try {
