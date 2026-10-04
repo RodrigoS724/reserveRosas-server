@@ -484,6 +484,23 @@ export async function crearReserva(data) {
     const estadoId = await obtenerEstadoId(conn, 'dt_estado_reserva', codigoEstadoReserva('pendiente'))
 
     let vehiculoId = Number(normalized.vehiculo_id || 0)
+    if (vehiculoId) {
+      const [rows] = await conn.execute(
+        'SELECT id FROM vehiculos_cliente WHERE id = ? AND cliente_id = ? LIMIT 1',
+        [vehiculoId, clienteId]
+      )
+      if (!rows[0]) {
+        throw new Error('El vehiculo seleccionado no pertenece al cliente')
+      }
+    } else if (matriculaNormalizada) {
+      const [rows] = await conn.execute(
+        'SELECT id FROM vehiculos_cliente WHERE cliente_id = ? AND matricula = ? LIMIT 1',
+        [clienteId, matriculaNormalizada]
+      )
+      if (rows[0]?.id) {
+        vehiculoId = Number(rows[0].id)
+      }
+    }
     const tieneDatosVehiculo = Boolean(String(normalized.marca || '').trim() || String(normalized.modelo || '').trim())
     if (!vehiculoId && tipoTurnoCodigo !== 'toma' && tieneDatosVehiculo) {
       vehiculoId = await upsertVehiculoMysql(conn, {

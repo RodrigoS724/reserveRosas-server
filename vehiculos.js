@@ -1,4 +1,4 @@
-import { execute } from './db.js'
+import { execute, withTransaction } from './db.js'
 import { normalizeMatricula } from './utils.js'
 
 export async function obtenerVehiculos() {
@@ -140,6 +140,35 @@ export async function actualizarVehiculoCliente(data = {}) {
   )
 
   return { id }
+}
+
+export async function borrarVehiculoCliente(input = {}) {
+  const payload = typeof input === 'object' && input !== null ? input : { id: input }
+  const id = Number(payload.id)
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new Error('Vehiculo invalido')
+  }
+
+  return withTransaction(async (conn) => {
+    const [vehiculos] = await conn.execute(
+      'SELECT id FROM vehiculos_cliente WHERE id = ? LIMIT 1',
+      [id]
+    )
+    if (!vehiculos[0]) {
+      throw new Error('Vehiculo no encontrado')
+    }
+
+    // Keep operational records, but remove their relation to the deleted vehicle.
+    await conn.execute('UPDATE reservas SET vehiculo_id = NULL WHERE vehiculo_id = ?', [id])
+    await conn.execute('UPDATE aprontes SET vehiculo_id = NULL WHERE vehiculo_id = ?', [id])
+    await conn.execute('UPDATE ingresos SET vehiculo_id = NULL WHERE vehiculo_id = ?', [id])
+    await conn.execute('UPDATE garantias SET vehiculo_id = NULL WHERE vehiculo_id = ?', [id])
+    await conn.execute('UPDATE servicios SET vehiculo_id = NULL WHERE vehiculo_id = ?', [id])
+    await conn.execute('DELETE FROM vehiculo_eventos WHERE vehiculo_id = ?', [id])
+    await conn.execute('DELETE FROM vehiculos_cliente WHERE id = ?', [id])
+
+    return { id }
+  })
 }
 
 export async function obtenerCatalogoVehiculos() {

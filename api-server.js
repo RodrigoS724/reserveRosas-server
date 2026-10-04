@@ -176,9 +176,10 @@ function isNumericId(value) {
 function normalizePathname(pathname = '/') {
   const raw = String(pathname || '/')
   const parts = raw.split('/').filter(Boolean)
+  const apiIndex = parts.indexOf('api')
 
-  if (parts[0] && parts[0] !== 'api' && parts[1] === 'api') {
-    return '/' + parts.slice(1).join('/')
+  if (apiIndex > 0) {
+    return '/' + parts.slice(apiIndex).join('/')
   }
 
   return raw || '/'
@@ -511,6 +512,21 @@ async function handleRest(req, res, url, parts) {
         ok(res, data)
         return true
       }
+      if (parts[2] === 'por-cedula') {
+        const cedula = url.searchParams.get('cedula') || ''
+        if (!cedula) {
+          fail(res, 400, 'Cedula requerida')
+          return true
+        }
+        const data = await vehiculos.obtenerVehiculosPorCedula(cedula)
+        ok(res, data)
+        return true
+      }
+      if (parts[2] === 'catalogo') {
+        const data = await vehiculos.obtenerCatalogoVehiculos()
+        ok(res, data)
+        return true
+      }
       if (parts[2] === 'lookup') {
         const matricula = url.searchParams.get('matricula')
         if (!matricula) {
@@ -526,6 +542,12 @@ async function handleRest(req, res, url, parts) {
         ok(res, data)
         return true
       }
+    }
+
+    if (method === 'DELETE' && isNumericId(parts[2])) {
+      const data = await vehiculos.borrarVehiculoCliente({ id: Number(parts[2]) })
+      ok(res, data)
+      return true
     }
   }
 

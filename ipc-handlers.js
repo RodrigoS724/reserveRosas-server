@@ -71,6 +71,10 @@ export async function handleIpc(channel, args) {
     case 'aprontes:alertas:config:set':
       return aprontesAlertConfig.setAprontesAlertConfig(args[0] || {})
 
+    // Vehiculos
+    case 'vehiculos:borrar':
+      return vehiculos.borrarVehiculoCliente(args[0] || {})
+
     // Horarios Aprontes
     case 'horarios-aprontes:base':
       return horariosAprontes.obtenerHorariosAprontesBase()

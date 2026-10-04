@@ -580,6 +580,8 @@ export async function actualizarApronte(id, data) {
         saleEspera,
         entraEspera,
         saleEspera,
+        entraEspera,
+        saleEspera,
         apronteId
       ]
     )
