@@ -158,13 +158,26 @@ export async function borrarVehiculoCliente(input = {}) {
       throw new Error('Vehiculo no encontrado')
     }
 
+    const referenceTables = ['reservas', 'aprontes', 'ingresos', 'garantias', 'servicios', 'vehiculo_eventos']
+    const [referenceColumns] = await conn.execute(
+      `SELECT table_name
+       FROM information_schema.columns
+       WHERE table_schema = DATABASE()
+         AND column_name = 'vehiculo_id'
+         AND table_name IN (${referenceTables.map(() => '?').join(', ')})`,
+      referenceTables
+    )
+    const tablesWithVehicleReference = new Set(referenceColumns.map((row) => row.table_name))
+
     // Keep operational records, but remove their relation to the deleted vehicle.
-    await conn.execute('UPDATE reservas SET vehiculo_id = NULL WHERE vehiculo_id = ?', [id])
-    await conn.execute('UPDATE aprontes SET vehiculo_id = NULL WHERE vehiculo_id = ?', [id])
-    await conn.execute('UPDATE ingresos SET vehiculo_id = NULL WHERE vehiculo_id = ?', [id])
-    await conn.execute('UPDATE garantias SET vehiculo_id = NULL WHERE vehiculo_id = ?', [id])
-    await conn.execute('UPDATE servicios SET vehiculo_id = NULL WHERE vehiculo_id = ?', [id])
-    await conn.execute('DELETE FROM vehiculo_eventos WHERE vehiculo_id = ?', [id])
+    for (const table of ['reservas', 'aprontes', 'ingresos', 'garantias', 'servicios']) {
+      if (tablesWithVehicleReference.has(table)) {
+        await conn.execute(`UPDATE ${table} SET vehiculo_id = NULL WHERE vehiculo_id = ?`, [id])
+      }
+    }
+    if (tablesWithVehicleReference.has('vehiculo_eventos')) {
+      await conn.execute('DELETE FROM vehiculo_eventos WHERE vehiculo_id = ?', [id])
+    }
     await conn.execute('DELETE FROM vehiculos_cliente WHERE id = ?', [id])
 
     return { id }

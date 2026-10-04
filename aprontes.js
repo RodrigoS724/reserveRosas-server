@@ -526,6 +526,9 @@ export async function actualizarApronte(id, data) {
 
     validateRequired(merged)
     const payload = normalizeAprontePayload(merged)
+    const mecanicoId = merged?.mecanico_id === null || merged?.mecanico_id === ''
+      ? null
+      : (Number(merged?.mecanico_id || 0) || null)
     const fechaNormalizada = normalizeDate(payload.fecha)
     const horaNormalizada = normalizeHora(payload.hora)
     const estadoAnterior = normalizeEstadoApronte(anterior.estado)
@@ -543,6 +546,7 @@ export async function actualizarApronte(id, data) {
        SET nombre = ?, fecha = ?, hora = ?,
            telefono = ?, localidad = ?, observaciones = ?,
            marca = ?, modelo = ?, numero_motor = ?, factura = ?,
+           mecanico_id = ?,
            estado = ?, repuestos_garantia = ?,
            correo_alerta_garantia = ?, dias_alerta_garantia = ?, fecha_alerta_garantia = ?,
            garantia_espera_desde = CASE
@@ -571,6 +575,7 @@ export async function actualizarApronte(id, data) {
         payload.modelo,
         payload.numero_motor,
         payload.factura,
+        mecanicoId,
         estadoNuevo,
         payload.repuestos_garantia,
         payload.correo_alerta_garantia,

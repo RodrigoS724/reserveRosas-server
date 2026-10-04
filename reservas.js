@@ -223,7 +223,7 @@ export async function listarClientes(filtro = '') {
        (SELECT MAX(a2.fecha) FROM aprontes a2 WHERE a2.cliente_id = c.id) AS ultimo_apronte_fecha
      FROM clientes c
      ${whereSql}
-     ORDER BY c.nombre ASC, c.id ASC`,
+     ORDER BY c.created_at DESC, c.id DESC`,
     params
   )
 
@@ -682,7 +682,7 @@ export async function actualizarReserva(idOrPayload, reserva) {
     const [rows] = await conn.execute(
       `SELECT nombre, cedula, telefono, marca, modelo, km, matricula,
               tipo_turno, particular_tipo, garantia_tipo, ${selectGarantiaFechaCompra},
-              ${selectGarantiaNumeroService}, ${selectGarantiaProblema}, fecha, hora, estado, ${detailColumn} AS detalles, cliente_id, vehiculo_id
+              ${selectGarantiaNumeroService}, ${selectGarantiaProblema}, fecha, hora, estado, ${detailColumn} AS detalles, cliente_id, vehiculo_id, mecanico_id
        FROM reservas WHERE id = ?`,
       [reservaId]
     )
@@ -712,7 +712,10 @@ export async function actualizarReserva(idOrPayload, reserva) {
       fecha: fechaNormalizada,
       hora: horaNormalizada,
       estado: merged?.estado ?? anterior.estado,
-      detalles: normalized.detalles ?? ''
+      detalles: normalized.detalles ?? '',
+      mecanico_id: merged?.mecanico_id === null || merged?.mecanico_id === ''
+        ? null
+        : (Number(merged?.mecanico_id || 0) || null)
     }
 
     const updateColumns = [
@@ -753,8 +756,8 @@ export async function actualizarReserva(idOrPayload, reserva) {
       updateValues.push(payload.garantia_problema ?? null)
     }
 
-    updateColumns.push('fecha = ?', 'hora = ?', 'estado = ?', `${detailColumn} = ?`)
-    updateValues.push(payload.fecha, payload.hora, payload.estado, payload.detalles)
+    updateColumns.push('fecha = ?', 'hora = ?', 'estado = ?', `${detailColumn} = ?`, 'mecanico_id = ?')
+    updateValues.push(payload.fecha, payload.hora, payload.estado, payload.detalles, payload.mecanico_id)
     updateValues.push(reservaId)
 
     await conn.execute(

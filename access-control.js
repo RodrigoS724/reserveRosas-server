@@ -1,4 +1,4 @@
-export const APP_ROLES = ['superadmin', 'administrador', 'ventas', 'caja', 'taller']
+export const APP_ROLES = ['superadmin', 'administrador', 'ventas', 'caja', 'taller', 'mecanico']
 
 export const ALL_PERMISSIONS = [
   'agenda',
@@ -20,7 +20,8 @@ const DEFAULT_PERMISSIONS = {
   administrador: ['agenda', 'reservas', 'registros', 'aprontes', 'clientes', 'mecanicos', 'historial', 'ajustes', 'vehiculos', 'usuarios', 'auditoria'],
   ventas: ['agenda', 'reservas', 'registros', 'aprontes', 'clientes', 'mecanicos', 'historial'],
   caja: ['agenda', 'reservas', 'registros', 'aprontes', 'clientes', 'mecanicos', 'historial'],
-  taller: ['reservas', 'aprontes', 'historial']
+  taller: ['reservas', 'aprontes', 'historial'],
+  mecanico: []
 }
 
 const ROLE_ALIASES = {
@@ -32,7 +33,8 @@ const ROLE_ALIASES = {
   user: 'ventas',
   ventas: 'ventas',
   caja: 'caja',
-  taller: 'taller'
+  taller: 'taller',
+  mecanico: 'mecanico'
 }
 
 export function normalizeRole(role) {
@@ -77,7 +79,8 @@ export function getActor(payload) {
 }
 
 export function isTallerRole(role) {
-  return normalizeRole(role) === 'taller'
+  const normalizedRole = normalizeRole(role)
+  return normalizedRole === 'taller' || normalizedRole === 'mecanico'
 }
 
 export function canApproveApronte(role) {
