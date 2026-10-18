@@ -86,6 +86,7 @@ async function hasColumn(tableName, columnName) {
 
 let reservasGuaranteeColumnsPromise = null
 let reservasDetailColumnPromise = null
+let reservasPresentationColumnsPromise = null
 
 async function getReservasGuaranteeColumns() {
   if (!reservasGuaranteeColumnsPromise) {
@@ -108,6 +109,46 @@ async function getReservasDetailColumn() {
       .then((hasDetalle) => (hasDetalle ? 'detalle' : 'detalles'))
   }
   return reservasDetailColumnPromise
+}
+
+async function getReservasPresentationColumns() {
+  if (!reservasPresentationColumnsPromise) {
+    reservasPresentationColumnsPromise = Promise.all([
+      getReservasDetailColumn(),
+      hasColumn('reservas', 'garantia_fecha_compra'),
+      hasColumn('reservas', 'garantia_numero_service'),
+      hasColumn('reservas', 'garantia_problema'),
+      hasColumn('reservas', 'fecha_compra'),
+      hasColumn('reservas', 'nro_servicio'),
+      hasColumn('reservas', 'servicio'),
+      hasColumn('reservas', 'problema')
+    ]).then(([
+      detailColumn,
+      hasGarantiaFechaCompra,
+      hasGarantiaNumeroService,
+      hasGarantiaProblema,
+      hasFechaCompra,
+      hasNroServicio,
+      hasServicio,
+      hasProblema
+    ]) => ({
+      detailColumn,
+      fechaCompraColumn: hasGarantiaFechaCompra ? 'garantia_fecha_compra' : (hasFechaCompra ? 'fecha_compra' : null),
+      numeroServiceColumn: hasGarantiaNumeroService
+        ? 'garantia_numero_service'
+        : (hasNroServicio ? 'nro_servicio' : (hasServicio ? 'servicio' : null)),
+      problemaColumn: hasGarantiaProblema ? 'garantia_problema' : (hasProblema ? 'problema' : null)
+    }))
+  }
+  return reservasPresentationColumnsPromise
+}
+
+function buildReservasPresentationSelect(columns) {
+  return `*,
+    ${columns.detailColumn} AS detalles,
+    ${columns.fechaCompraColumn || 'NULL'} AS garantia_fecha_compra,
+    ${columns.numeroServiceColumn || 'NULL'} AS garantia_numero_service,
+    ${columns.problemaColumn || 'NULL'} AS garantia_problema`
 }
 
 async function upsertClienteMysql(conn, data) {
@@ -484,6 +525,9 @@ export async function crearReserva(data) {
     const estadoId = await obtenerEstadoId(conn, 'dt_estado_reserva', codigoEstadoReserva('pendiente'))
 
     let vehiculoId = Number(normalized.vehiculo_id || 0)
+    if (tipoTurnoCodigo === 'toma') {
+      vehiculoId = 0
+    }
     if (vehiculoId) {
       const [rows] = await conn.execute(
         'SELECT id FROM vehiculos_cliente WHERE id = ? AND cliente_id = ? LIMIT 1',
@@ -575,7 +619,7 @@ export async function crearReserva(data) {
 
     await registrarVehiculoEvento(conn, {
       clienteId,
-      vehiculoId,
+      vehiculoId: vehiculoId || null,
       reservaId,
       tipoEvento: 'reserva',
       fechaEvento: new Date(),
@@ -835,8 +879,9 @@ export async function actualizarEstadoReserva(idOrPayload, estado) {
 export async function obtenerReservasSemana(desde, hasta) {
   const desdeNormalizado = normalizeDate(desde)
   const hastaNormalizado = normalizeDate(hasta)
+  const columns = await getReservasPresentationColumns()
   const rows = await execute(
-    `SELECT * FROM reservas
+    `SELECT ${buildReservasPresentationSelect(columns)} FROM reservas
      WHERE fecha >= ? AND fecha <= ?
      ORDER BY fecha, hora`,
     [desdeNormalizado, hastaNormalizado]
@@ -846,8 +891,9 @@ export async function obtenerReservasSemana(desde, hasta) {
 
 export async function obtenerReservasPorFecha(fecha) {
   const fechaNormalizada = normalizeDate(fecha)
+  const columns = await getReservasPresentationColumns()
   const rows = await execute(
-    `SELECT * FROM reservas
+    `SELECT ${buildReservasPresentationSelect(columns)} FROM reservas
      WHERE fecha = ?
      ORDER BY hora`,
     [fechaNormalizada]
@@ -856,8 +902,9 @@ export async function obtenerReservasPorFecha(fecha) {
 }
 
 export async function obtenerTodasLasReservas() {
+  const columns = await getReservasPresentationColumns()
   const rows = await execute(
-    'SELECT * FROM reservas ORDER BY fecha DESC, hora DESC'
+    `SELECT ${buildReservasPresentationSelect(columns)} FROM reservas ORDER BY fecha DESC, hora DESC`
   )
   return rows
 }
@@ -900,5 +947,3 @@ export async function obtenerCambiosReservas(since, lastId, limit) {
   )
   return rows
 }
-
-

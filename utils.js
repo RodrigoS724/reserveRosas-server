@@ -41,6 +41,9 @@ export function normalizeCedula(value) {
 
 export function isValidCedulaUy(value) {
   const digits = normalizeCedula(value)
+  if (digits.length === 12) {
+    return true
+  }
   if (digits.length < 7 || digits.length > 8) {
     return false
   }

@@ -173,6 +173,9 @@ export async function registrarVehiculoEvento(source, data = {}) {
     throw new Error('clienteId requerido')
   }
 
+  const vehiculoIdRaw = Number(data.vehiculoId ?? data.vehiculo_id ?? 0)
+  const vehiculoId = Number.isInteger(vehiculoIdRaw) && vehiculoIdRaw > 0 ? vehiculoIdRaw : null
+
   const result = await queryResult(
     source,
     `INSERT INTO vehiculo_eventos (
@@ -184,7 +187,7 @@ export async function registrarVehiculoEvento(source, data = {}) {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       clienteId,
-      data.vehiculoId ?? data.vehiculo_id ?? null,
+      vehiculoId,
       data.reservaId ?? data.reserva_id ?? null,
       data.apronteId ?? data.apronte_id ?? null,
       data.garantiaId ?? data.garantia_id ?? null,
