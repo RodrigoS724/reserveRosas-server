@@ -267,3 +267,32 @@ CREATE TABLE IF NOT EXISTS ventas_creditos (
   INDEX idx_ventas_creditos_fecha (fecha)
 );
 
+CREATE TABLE IF NOT EXISTS pedidos_repuestos (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  cliente VARCHAR(255) NULL,
+  proveedor VARCHAR(255) NULL,
+  telefono_cliente VARCHAR(50) NULL,
+  fecha_consulta DATE NULL,
+  fecha_aviso DATE NULL,
+  fecha_pedido DATE NULL,
+  estado VARCHAR(20) NOT NULL DEFAULT 'pendiente',
+  notas TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_pedidos_repuestos_estado (estado),
+  INDEX idx_pedidos_repuestos_fecha_pedido (fecha_pedido)
+);
+
+CREATE TABLE IF NOT EXISTS pedidos_repuestos_items (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  pedido_id BIGINT NOT NULL,
+  descripcion VARCHAR(500) NOT NULL,
+  disponibilidad VARCHAR(120) NULL,
+  precio_proveedor DECIMAL(12,2) NULL,
+  precio_publico DECIMAL(12,2) NULL,
+  estado VARCHAR(60) NOT NULL DEFAULT 'en espera',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_pedidos_repuestos_items_pedido (pedido_id),
+  CONSTRAINT fk_pedidos_repuestos_items_pedido
+    FOREIGN KEY (pedido_id) REFERENCES pedidos_repuestos(id) ON DELETE CASCADE
+);

@@ -12,6 +12,7 @@ import * as horariosAprontes from './horarios-aprontes.js'
 import * as motos from './motos.js'
 import * as registros from './registros.js'
 import * as ventas from './ventas.js'
+import * as pedidosRepuestos from './pedidos-repuestos.js'
 
 let ingresosModulePromise = null
 
@@ -116,6 +117,18 @@ export async function handleIpc(channel, args) {
       return ventas.borrarCreditoVenta(args[0] || {})
     case 'ventas:exportar-mes':
       return ventas.exportarMesCompleto(args[0] || {})
+
+    // Pedidos de repuestos
+    case 'pedidos-repuestos:list':
+      return pedidosRepuestos.listarPedidosRepuestos()
+    case 'pedidos-repuestos:create':
+      return pedidosRepuestos.crearPedidoRepuestos(args[0] || {})
+    case 'pedidos-repuestos:update':
+      return pedidosRepuestos.actualizarPedidoRepuestos(args[0] || {})
+    case 'pedidos-repuestos:update-estado':
+      return pedidosRepuestos.actualizarEstadoPedidoRepuestos(args[0] || {})
+    case 'pedidos-repuestos:delete':
+      return pedidosRepuestos.borrarPedidoRepuestos(args[0] || {})
 
     // Ingresos / egresos
     case 'ingresos:list':
@@ -232,7 +245,6 @@ export async function handleIpc(channel, args) {
       throw new Error('Canal no soportado: ' + channel)
   }
 }
-
 
 
 

@@ -410,6 +410,10 @@ function normalizeReservaInput(data) {
     normalized.particular_tipo = null
   }
 
+  if (tipoTurno === 'Garantia' && garantiaTipo === 'Reparacion' && !String(normalized.detalles || '').trim()) {
+    normalized.detalles = String(normalized.garantia_problema || '').trim()
+  }
+
   return normalized
 }
 
